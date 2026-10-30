@@ -1,0 +1,12 @@
+{
+  "name": "foss-bu-web",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "start": "wrangler dev --ip 127.0.0.1 --port 8765",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.156.0"
+  }
+}

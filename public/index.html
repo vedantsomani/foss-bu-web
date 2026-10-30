@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <title>FOSS-BU Arena</title>
+    <link rel="shortcut icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="stylesheet" href="romero.css" /><link rel="stylesheet" href="arena.css" />
+    <meta name="viewport" content="minimal-ui, width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta property="og:title" content="FOSS-BU Arena" />
+    <meta property="og:description" content="FOSS-BU Arena" />
+    <meta property="og:url" content="https://play.vedantsomani.tech" />
+    <meta property="og:image" content="https://play.vedantsomani.tech/share.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    
+    <meta name="twitter:description" content="FOSS-BU Arena" />
+    <meta name="twitter:image" content="https://play.vedantsomani.tech/share.png" />
+  </head>
+  <body class="noselect">
+<header><a href="/">FOSS-BU <span>ARENA</span></a><span class="badge">BROWSER EDITION · 2 PLAYERS</span></header>
+    <div id="container">
+      <div id="mobile">
+        <h1>For a better mobile experience, click "Hide Toolbar" in the URL toolbar</h1>
+        <img src="hidetoolbar.png" />
+      </div>
+      <div id="monitor">
+        <div id="monitorscreen">
+          <canvas
+            id="canvas"
+            oncontextmenu="event.preventDefault()"
+            tabindex="-1"
+          ></canvas>
+          <div id="menu">
+            <div id="logo" class="vspace" style="display:none"></div>
+            <div id="buttons" style="display:none">
+              <a class="btn grey" id="multiplayer">Create room</a>
+              <a class="btn grey" id="solo">Explore the arena</a><div class="joinbox"><label for="roomcode">Have a room code?</label><input id="roomcode" maxlength="8" autocomplete="off" placeholder="ROOM CODE" aria-describedby="roomerror"><button class="btn secondary" id="joinroom" type="button">Join room</button><p id="roomerror" role="status"></p></div>
+            </div>
+            <div id="text" style="display:none"><h1>FOSS-BU Arena</h1><h1>Create a room, share the code, and play together.</h1></div>
+          </div>
+        </div>
+        <div id="footer" class="writer"></div>
+      </div>
+    </div>
+<aside><strong>How to play</strong><p>Keyboard + mouse recommended. WASD or arrows move; mouse aims; Space or click fires; E opens doors; F enters fullscreen.</p><p>Each room holds two players. The match begins when both connect. Keep the host tab open. Desktop Zandronum/Odamex matches use a separate protocol.</p><a href="https://github.com/vedantsomani/foss-bu-web">Source & credits</a></aside>
+    <div id="joystick1"></div>
+    <div id="joystick2"></div>
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.8/clipboard.min.js"></script>
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.9.0/nipplejs.js"></script>
+    <script src="config.js"></script><script type="text/javascript" src="carmack.js"></script>
+    <script type="text/javascript" src="websockets-doom.js"></script>
+    
+
+  </body>
+</html>
+
+

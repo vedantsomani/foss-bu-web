@@ -1,0 +1,30 @@
+{
+  "name": "foss-bu-web",
+  "main": "src/index.mjs",
+  "compatibility_date": "2025-01-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "router",
+        "class_name": "Router"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Router"
+      ]
+    }
+  ],
+  "account_id": "50652594c81ec9440bcc20ad76781df7",
+  "workers_dev": true
+}
