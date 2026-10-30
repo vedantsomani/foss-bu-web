@@ -117,13 +117,30 @@ genPetName = () => {
     return `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 };
 
+
+// Apply the same local rendering preference to solo, host, and invited players.
+function runArena(args) {
+    const fast = document.getElementById('smooth-play').checked;
+    const mute = document.getElementById('mute-game').checked;
+    const launchArgs = args.slice();
+    const configAt = launchArgs.indexOf('-config');
+    launchArgs[configAt + 1] = fast ? 'smooth.cfg' : 'default.cfg';
+    if (mute) launchArgs.push('-nosound');
+    document.getElementById('performance-settings').disabled = true;
+    document.body.classList.add('playing');
+    document.getElementById('canvas').focus();
+    callMain(launchArgs);
+}
+const arenaDebug = new URLSearchParams(window.location.search).has('debug');
+const arenaLog = (...args) => { if (arenaDebug) console.log(...args); };
+
 deathMatchOr = (next) => { commonArgs = commonArgs.concat(['-deathmatch']); next(); };
 
 startSolo = () => {
     display(["logo", "buttons", "menu"], "none");
     display(["canvas"]);
     typewriter(["W,A,S,D OR ARROWS TO MOVE, Q,E,Z|O TO STRAFE, X|P FOR SPEED, C TO OPEN", "TAB SHOWS THE MAP, T TO WRITE (MULTIPLAYER), YOU CAN ALSO USE THE MOUSE"]);
-    callMain(commonArgs);
+    runArena(commonArgs);
 };
 
 onClick = (id, func) => {
@@ -307,7 +324,7 @@ virtualGamepads = () => {
 };
 
 choosePet = (next) => {
-    var t = `<h1 class="vspace">Choose your player name</h1><div class="pinput"><a class="btn tertiary" id="random">&#x21bb;</a><input autocorrect="off" autocomplete="off" type="text" id="petname" maxlength="20" value="${genPetName()}"/><a class="btn secondary" id="mypet">Go</a></div>`;
+    var t = `<h1 class="vspace">Choose your player name</h1><div class="pinput"><a class="btn tertiary" tabindex="0" role="button" id="random">&#x21bb;</a><input autocorrect="off" autocomplete="off" type="text" id="petname" maxlength="20" value="${genPetName()}"/><a class="btn secondary" tabindex="0" role="button" id="mypet">Go</a></div>`;
     write(t);
     mp = $("petname");
     mp.oninput = () => {
@@ -342,11 +359,12 @@ startMultiplayer = () => {
                     t += '<h1 class="vspace">Share this room code with your friend:</h1>';
                     t += `<h1><a class="perma h" data-clipboard-text="${web}/${room}">${room.toUpperCase()}</a></h1>`;
                     t += '<h1 class="vspace">Your friend can join using this code or link</h1>';
+                    t += `<input class="invite-link" aria-label="Room invite link" readonly value="${web}/${room}" onclick="this.select()">`;
                     t += "<h1>Select Next, then wait for your opponent</h1>";
                     t += "<h1>The match begins when both players connect</h1><h1/>";
                     t += '<div class="vspace">';
                     t += `<a id="clip" class="btn tertiary perma" data-clipboard-text="${web}/${room}" data-room="${room}">Copy invite link</a>`;
-                    t += `<a class="btn secondary" id="start" data-room="${room}">Next</a>`;
+                    t += `<a class="btn secondary" tabindex="0" role="button" id="start" data-room="${room}">Next</a>`;
                     t += "</div>";
                     write(t);
                     const clp = new ClipboardJS(".perma");
@@ -356,7 +374,7 @@ startMultiplayer = () => {
                     onClick("start", (e) => {
                         display(["menu"], "none");
                         display(["canvas"]);
-                        callMain(commonArgs.concat(["-server", "-privateserver", "-dup", "1", "-wss", `${wsbase}/api/ws/${e.target.getAttribute("data-room")}`]));
+                        runArena(commonArgs.concat(["-server", "-privateserver", "-dup", "1", "-wss", `${wsbase}/api/ws/${e.target.getAttribute("data-room")}`]));
                     });
                 });
             });
@@ -386,6 +404,7 @@ var sendkey = (keys, type) => {
 if (hasWebAssembly()) {
     var Module = {
         onRuntimeInitialized: () => {
+            document.getElementById("load-status").textContent = "BROWSER EDITION · 2 PLAYERS · READY";
             room = window.location.pathname.slice(1).toLowerCase();
             if (room.match(/^[a-z2-9]{8}$/)) {
                 fetch(`${base}/api/room/${room}`)
@@ -403,7 +422,7 @@ if (hasWebAssembly()) {
                                         display(["menu"], "none");
                                         display(["canvas"]);
                                         typewriter(["Connecting to master server. Please wait.", "Still trying. Is the master server for this room running?"]);
-                                        callMain(commonArgs.concat(["-connect", "1", "-dup", "1", "-wss", `${wsbase}/api/ws/${room}`]));
+                                        runArena(commonArgs.concat(["-connect", "1", "-dup", "1", "-wss", `${wsbase}/api/ws/${room}`]));
                                     });
                                 }, 3000);
                             }
@@ -428,6 +447,7 @@ if (hasWebAssembly()) {
             Module.FS.createPreloadedFile("", "freedm.wad", "freedm.wad", true, true);
             Module.FS.createPreloadedFile("", "fossbu.wad", "fossbu.wad", true, true);
             Module.FS.createPreloadedFile("", "default.cfg", "default.cfg", true, true);
+            Module.FS.createPreloadedFile("", "smooth.cfg", "smooth.cfg", true, true);
         },
         printErr: (text) => {
             console.error(text);
@@ -485,8 +505,8 @@ if (hasWebAssembly()) {
                             fetch(`${base}/api/room/${room}/started`)
                                 .then((response) => response.json())
                                 .then((data) => {
-                                    console.log(data);
-                                    console.log(`router notified that ${room} has started`);
+                                    arenaLog(data);
+                                    arenaLog(`router notified that ${room} has started`);
                                 });
                         }
                         break;
@@ -500,10 +520,10 @@ if (hasWebAssembly()) {
                 }
                 if (msg) typewriter(msg);
             }
-            console.log(text);
+            arenaLog(text);
         },
         setStatus: (text) => {
-            console.log(text);
+            arenaLog(text);
         },
         totalDependencies: 0,
         monitorRunDependencies: function (left) {

@@ -13,3 +13,11 @@ Install Node.js, run `npm install`, then `npm start`. For Cloudflare, use `npx w
 FreeDM 0.13.0: Freedoom contributors, BSD-style license and credits in public/FreeDM-*.txt. Custom FOSS-BU map/title artwork overlays those assets. Browser frontend/room router adapted from Cloudflare doom, MIT (CLOUDFLARE-LICENSE.txt). Engine is Chocolate Doom WebAssembly, GPL-2.0 (ENGINE-LICENSE.txt); see ENGINE-SOURCE-AND-CREDITS.txt for the binary source provenance. Preserve each component's license. No commercial Doom WAD is required.
 
 Rooms expire after 12 hours. This is a testing release, not a guarantee of cross-platform performance or large-scale multiplayer reliability.
+
+## Performance update
+
+The optional Smoother play setting uses Doom low detail and four simultaneous audio channels. Uncheck it before starting for original detail. Sound off is optional. Decorative monitor/footer animations are disabled. These reduce rendering/audio work; they do not eliminate Internet latency or change the engine tick rate. All players need to keep their game tabs visible. No change was made to network tick duplication.
+
+## Local server and controllers
+
+Start with **PI-SETUP.md** for Raspberry Pi and local HTTPS. **Start Wi-Fi Game.cmd** hosts the same browser game on Windows. **CODEX-NEXT-STEPS.md** is the continuation prompt. The optional standard controller mapping is in public/controller.js. Physical controllers and Pi hardware still need testing. Controller access requires trusted HTTPS or localhost; LAN HTTP remains keyboard/mouse only.

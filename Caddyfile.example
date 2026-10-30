@@ -1,0 +1,5 @@
+# Replace with the Pi Wi-Fi IP; reserve that IP on the router.
+https://192.168.1.50 {
+    tls internal
+    reverse_proxy 127.0.0.1:8765
+}
