@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fragline render lab</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; }
+  #hud { position: fixed; left: 8px; top: 8px; color: #9f9; background: rgba(0,0,0,.55); padding: 6px 8px; font-size: 12px; line-height: 1.35; white-space: pre; pointer-events: none; }
+  #help { position: fixed; left: 8px; bottom: 8px; color: #ccc; background: rgba(0,0,0,.5); padding: 6px 8px; font-size: 11px; pointer-events: none; }
+  #msg { position: fixed; inset: 0; display: grid; place-items: center; color: #fff; font-size: 14px; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="help">click: mouselook | WASD move | shift run | F fly/walk | Q/E up/down (fly) | LMB fire light | 1 classic palette | 2 bloom | 3/4 render scale</div>
+<div id="msg">loading...</div>
+<script type="module" src="demo.js"></script>
+</body>
+</html>
