@@ -391,7 +391,9 @@ void P_ZMovement (mobj_t* mo)
 		// and utter appropriate sound.
 		mo->player->deltaviewheight = mo->momz>>3;
 		// [crispy] center view if not using permanent mouselook
-		if (!crispy->mouselook)
+		// [fragline] ...but never in network games, where that local
+		// setting would make players' games disagree.
+		if (!crispy->mouselook && !netgame)
 		    mo->player->centering = true;
 		// [crispy] dead men don't say "oof"
 		if (mo->health > 0 || !crispy->soundfix)

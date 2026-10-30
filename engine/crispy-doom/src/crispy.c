@@ -41,6 +41,16 @@ static const crispy_t critical_s = {0};
 const crispy_t *critical = &critical_s;
 
 // [crispy] update the "singleplayer" variable and the "critical" struct
+// [fragline] Gameplay options shared by everyone in a network game. Every
+// player runs the same build, so modern aiming and jumping are safe to allow;
+// they are fixed here, not read from each player's settings, to keep every
+// copy of the game in sync.
+static const crispy_t netgame_s = {
+	.freeaim = FREEAIM_DIRECT,
+	.jump = JUMP_LOW,
+};
+boolean crispy_netgame = false;
+
 void CheckCrispySingleplayer (boolean singleplayer)
 {
 	if ((crispy->singleplayer = singleplayer))
@@ -49,6 +59,6 @@ void CheckCrispySingleplayer (boolean singleplayer)
 	}
 	else
 	{
-		critical = &critical_s;
+		critical = crispy_netgame ? &netgame_s : &critical_s;
 	}
 }

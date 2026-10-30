@@ -39,7 +39,7 @@ class LanStatic(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'game.js', page)
         self.assertIn('text/html', headers['Content-Type'])
         self.assertEqual((await self.get('/abcdefgh'))[1], page)
-        for name in ['freedm.wad.gz', 'websockets-doom.wasm.gz', 'fragline.wad', 'extra.cfg', 'game.js', 'sw.js']:
+        for name in ['freedm.wad.gz', 'websockets-doom.wasm.gz', 'fragline.wad', 'manifest.webmanifest', 'game.js', 'sw.js']:
             status, body, _ = await self.get('/' + name)
             self.assertEqual(status, 200, name)
             self.assertEqual(body, (app.PUBLIC / name).read_bytes(), name)

@@ -3,17 +3,19 @@
     const pressed = (pad, n) => !!pad.buttons[n]?.pressed || (pad.buttons[n]?.value || 0) > 0.5;
     function gameKeys(pad, deadzone = 0.25) {
         const keys = new Set();
-        const x = pad.axes[0] || 0, y = pad.axes[1] || 0, turn = pad.axes[2] || 0;
+        const x = pad.axes[0] || 0, y = pad.axes[1] || 0, turn = pad.axes[2] || 0, look = pad.axes[3] || 0;
         if (y < -deadzone || pressed(pad, 12)) keys.add(87); // W
         if (y > deadzone || pressed(pad, 13)) keys.add(83); // S
         if (x < -deadzone) keys.add(65); // A strafe
         if (x > deadzone) keys.add(68); // D strafe
-        if (turn < -deadzone || pressed(pad, 14)) keys.add(79); // O turn
-        if (turn > deadzone || pressed(pad, 15)) keys.add(80); // P turn
-        if (pressed(pad, 7)) keys.add(32); // RT fire
+        if (turn < -deadzone || pressed(pad, 14)) keys.add(37); // turn left
+        if (turn > deadzone || pressed(pad, 15)) keys.add(39); // turn right
+        if (look < -deadzone) keys.add(33); // look up
+        if (look > deadzone) keys.add(34); // look down
+        if (pressed(pad, 7)) keys.add(17); // RT fire
         if (pressed(pad, 6) || pressed(pad, 10)) keys.add(16); // LT / L3 run
         if (pressed(pad, 2)) keys.add(69); // X use
-        if (pressed(pad, 0)) keys.add(13); // A respawn/confirm
+        if (pressed(pad, 0)) { keys.add(32); keys.add(13); } // A jump / confirm
         if (pressed(pad, 1) || pressed(pad, 9)) keys.add(27); // B/Start menu
         if (pressed(pad, 3)) keys.add(9); // Y map
         return keys;
@@ -27,7 +29,7 @@
     const deadzone = document.getElementById('controller-deadzone');
     const canvas = document.getElementById('canvas');
     let held = new Set(), previous = new Set(), frame = null, slot = 2;
-    const codes = {9:'Tab',13:'Enter',16:'ShiftLeft',27:'Escape',32:'Space',65:'KeyA',68:'KeyD',69:'KeyE',79:'KeyO',80:'KeyP',83:'KeyS',87:'KeyW'};
+    const codes = {9:'Tab',13:'Enter',16:'ShiftLeft',17:'ControlLeft',27:'Escape',32:'Space',33:'PageUp',34:'PageDown',37:'ArrowLeft',39:'ArrowRight',65:'KeyA',68:'KeyD',69:'KeyE',83:'KeyS',87:'KeyW'};
     function emit(number, down) {
         const event = new Event(down ? 'keydown' : 'keyup', {bubbles:true, cancelable:true});
         Object.assign(event, {keyCode:number, which:number, code:codes[number] || `Digit${number - 48}`});

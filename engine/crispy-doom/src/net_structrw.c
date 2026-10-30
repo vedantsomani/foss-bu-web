@@ -23,6 +23,7 @@
 #include "m_misc.h"
 #include "net_packet.h"
 #include "net_structrw.h"
+#include "crispy.h"
 
 // String names for the enum values in net_protocol_t, which are what is
 // sent over the wire. Every enum value must have an entry in this list.
@@ -210,6 +211,9 @@ void NET_WriteTiccmdDiff(net_packet_t *packet, net_ticdiff_t *diff,
     {
         NET_WriteInt8(packet, diff->cmd.buttons2);
         NET_WriteInt16(packet, diff->cmd.inventory);
+        // [fragline] Doom has no Strife inventory; this block also carries the
+        // mouse-look delta so vertical aim is the same on every player's game.
+        NET_WriteInt16(packet, (unsigned int) BETWEEN(-32768, 32767, diff->cmd.lookdir));
     }
 }
 
@@ -297,6 +301,10 @@ boolean NET_ReadTiccmdDiff(net_packet_t *packet, net_ticdiff_t *diff,
         if (!NET_ReadInt16(packet, &val))
             return false;
         diff->cmd.inventory = val;
+
+        if (!NET_ReadSInt16(packet, &sval))
+            return false;
+        diff->cmd.lookdir = sval;
     }
 
     return true;
@@ -327,7 +335,8 @@ void NET_TiccmdDiff(ticcmd_t *tic1, ticcmd_t *tic2, net_ticdiff_t *diff)
 
     // Strife-specific
 
-    if (tic1->buttons2 != tic2->buttons2 || tic2->inventory != 0)
+    if (tic1->buttons2 != tic2->buttons2 || tic2->inventory != 0
+     || tic2->lookdir != 0)
         diff->diff |= NET_TICDIFF_STRIFE;
 }
 
@@ -371,10 +380,12 @@ void NET_TiccmdPatch(ticcmd_t *src, net_ticdiff_t *diff, ticcmd_t *dest)
     {
         dest->buttons2 = diff->cmd.buttons2;
         dest->inventory = diff->cmd.inventory;
+        dest->lookdir = diff->cmd.lookdir;
     }
     else
     {
         dest->inventory = 0;
+        dest->lookdir = 0; // a per-tic delta, not a held value
     }
 }
 

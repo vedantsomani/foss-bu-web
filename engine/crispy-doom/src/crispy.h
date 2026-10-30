@@ -127,6 +127,7 @@ extern crispy_t *const crispy;
 extern const crispy_t *critical;
 
 extern void CheckCrispySingleplayer (boolean singleplayer);
+extern boolean crispy_netgame; // [fragline] in a network game (not a demo)
 
 enum
 {

@@ -286,6 +286,10 @@ void D_CheckNetGame (void)
         }
     }
 
+    // [fragline] Use the shared network-game gameplay options.
+    crispy_netgame = netgame;
+    CheckCrispySingleplayer(!demorecording && !demoplayback && !netgame);
+
     // [fragline] Tell the web page the match is running.
     printf("doom: 10, game started\n");
 }

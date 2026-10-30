@@ -207,7 +207,9 @@ void P_MovePlayer (player_t* player)
             cmd->lookdir = MLOOKUNIT * 5 * look;
         }
     }
-    if (!menuactive && !demoplayback)
+    // [fragline] In network games the menu does not pause play, so aim must
+    // update regardless of whether this player's menu is open.
+    if ((netgame || !menuactive) && !demoplayback)
     {
 	player->lookdir = BETWEEN(-LOOKDIRMIN * MLOOKUNIT,
 	                          LOOKDIRMAX * MLOOKUNIT,

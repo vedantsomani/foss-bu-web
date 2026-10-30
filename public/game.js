@@ -1,15 +1,12 @@
-/* Fragline browser client: downloads, lobby, room flow and engine start-up. */
+/* Fragline browser client: downloads, menus, settings, rooms and engine start-up. */
 'use strict';
 (() => {
-    const VERSION = '1.0.0';
+    const VERSION = '2.0.0';
     // Sizes are the bytes sent over the wire; tests/static.test.cjs keeps them in sync.
     const DOWNLOADS = [
-        {file: 'websockets-doom.wasm.gz', bytes: 2387725, wasm: true},
+        {file: 'websockets-doom.wasm.gz', bytes: 731935, wasm: true},
         {file: 'freedm.wad.gz', bytes: 8513298, as: 'freedm.wad'},
         {file: 'fragline.wad', bytes: 68196, as: 'fragline.wad'},
-        {file: 'default.cfg', bytes: 1593, as: 'default.cfg'},
-        {file: 'smooth.cfg', bytes: 1593, as: 'smooth.cfg'},
-        {file: 'extra.cfg', bytes: 64, as: 'extra.cfg'},
     ];
     const MAPS = ['Tech Test', 'Natural Station', 'Issues of Claveria', 'Steel', 'Dense Fields', 'Temple of Ammon',
         'Main Stronghold', 'Artifact Base', 'Industrial Outland', 'Detached Grounds', 'Isolated Facility',
@@ -23,6 +20,19 @@
     const NOUNS = ['Imp', 'Demon', 'Baron', 'Knight', 'Revenant', 'Spectre', 'Golem', 'Lich', 'Sentinel', 'Reaver',
         'Marine', 'Gunner', 'Raider', 'Wraith', 'Hunter', 'Rocketeer', 'Brawler', 'Drifter', 'Warden', 'Nomad'];
 
+    // Graphics presets map onto Crispy Doom's renderer options.
+    const PRESETS = {
+        ultra: {crispy_hires: 1, crispy_truecolor: 1, crispy_smoothlight: 1, crispy_brightmaps: 3, crispy_translucency: 3, crispy_coloredblood: 1},
+        high: {crispy_hires: 1, crispy_truecolor: 0, crispy_smoothlight: 1, crispy_brightmaps: 3, crispy_translucency: 3, crispy_coloredblood: 1},
+        performance: {crispy_hires: 0, crispy_truecolor: 0, crispy_smoothlight: 0, crispy_brightmaps: 0, crispy_translucency: 1, crispy_coloredblood: 0},
+    };
+    // Every setting the Settings screen edits: element id -> default value.
+    const SETTINGS = {
+        'set-graphics': 'ultra', 'set-fps': '0', 'set-hud': 'minimal', 'set-crosshair': true, 'set-showfps': false,
+        'set-sens': '5', 'set-look': '5', 'set-invert': false, 'set-autorun': true,
+        'set-sound': true, 'set-volume': '10', 'set-fullscreen': true,
+    };
+
     const $ = id => document.getElementById(id);
     const relayMeta = document.querySelector('meta[name="fragline-relay"]')?.content.trim();
     const relay = (relayMeta || location.origin).replace(/\/$/, '');
@@ -31,20 +41,22 @@
         get(key, fallback) { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } },
         set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } },
     };
+    const debug = new URLSearchParams(location.search).has('debug');
 
-    const state = {room: null, host: false, started: false, running: false, poll: null};
+    const state = {room: null, host: false, started: false, running: false, poll: null, back: 'home'};
 
     // ---------- Screens and messages ----------
 
     function show(screen) {
         for (const el of document.querySelectorAll('#panel > .screen')) el.hidden = el.id !== `screen-${screen}`;
         $('panel').hidden = false;
-        const focusable = $(`screen-${screen}`).querySelector('[autofocus], input, select, button');
+        const focusable = $(`screen-${screen}`).querySelector('[autofocus], button, input, select');
         focusable?.focus({preventScroll: true});
     }
 
     function fail(title, detail) {
         stopPolling();
+        exitImmersive();
         $('message-title').textContent = title;
         $('message-text').textContent = detail || '';
         show('message');
@@ -75,15 +87,27 @@
         return name;
     }
 
+    function setting(id) {
+        const el = $(id);
+        return el.type === 'checkbox' ? el.checked : el.value;
+    }
+
     function bindSettings() {
         $('player-name').value = cleanName(store.get('fragline-name', '')) || randomName();
         for (const id of ['player-name', 'join-name']) $(id).addEventListener('input', e => { e.target.value = cleanName(e.target.value); });
         $('random-name').addEventListener('click', () => { $('player-name').value = randomName(); });
-        for (const id of ['smooth-play', 'mute-game']) {
-            const box = $(id);
-            box.checked = store.get(`fragline-${id}`, '0') === '1';
-            box.addEventListener('change', () => store.set(`fragline-${id}`, box.checked ? '1' : '0'));
+        for (const [id, fallback] of Object.entries(SETTINGS)) {
+            const el = $(id);
+            const saved = store.get(`fragline-${id}`, null);
+            if (el.type === 'checkbox') el.checked = saved === null ? fallback : saved === '1';
+            else el.value = saved ?? fallback;
+            const save = () => {
+                store.set(`fragline-${id}`, el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value);
+                renderSettingValues();
+            };
+            el.addEventListener(el.type === 'range' ? 'input' : 'change', save);
         }
+        renderSettingValues();
         const map = $('match-map');
         MAPS.forEach((name, i) => map.add(new Option(`${String(i + 1).padStart(2, '0')} · ${name}`, String(i + 1))));
         for (const id of ['match-map', 'match-players', 'match-time', 'match-mode']) {
@@ -92,6 +116,45 @@
             if (field.selectedIndex < 0) field.selectedIndex = 0;
             field.addEventListener('change', () => store.set(`fragline-${id}`, field.value));
         }
+    }
+
+    function renderSettingValues() {
+        for (const el of document.querySelectorAll('input[type=range]')) {
+            const out = document.querySelector(`output[for="${el.id}"]`);
+            if (out) out.textContent = el.value;
+        }
+        $('fps-meter').hidden = !setting('set-showfps') || !state.started;
+    }
+
+    // Build the two engine config files from the player's settings. Classic Doom
+    // options live in default.cfg; Crispy Doom's own options in extra.cfg.
+    function engineConfigs() {
+        const preset = PRESETS[setting('set-graphics')] || PRESETS.ultra;
+        const fps = Number(setting('set-fps'));
+        const vanilla = {
+            mouse_sensitivity: setting('set-sens'), sfx_volume: setting('set-volume'), music_volume: 0, show_messages: 1,
+            // Modern layout: WASD, arrows turn, Ctrl/click fire, E use, Alt strafe, Shift run.
+            key_right: 77, key_left: 75, key_up: 17, key_down: 31, key_strafeleft: 30, key_straferight: 32,
+            key_fire: 29, key_use: 18, key_strafe: 56, key_speed: 42,
+            use_mouse: 1, mouseb_fire: 0, mouseb_strafe: -1, mouseb_forward: -1,
+            use_joystick: 0, joyb_speed: setting('set-autorun') ? 29 : 2,
+            screenblocks: setting('set-hud') === 'classic' ? 10 : 15, detaillevel: 0, // 15: Crispy HUD at the screen edges
+            snd_channels: 16, snd_musicdevice: 0, snd_sfxdevice: 3, usegamma: 0,
+        };
+        const extended = {
+            fullscreen: 0, aspect_ratio_correct: 1, integer_scaling: 0, vga_porch_flash: 0, show_endoom: 0,
+            grabmouse: 1, novert: 1, mouse_sensitivity_y: setting('set-look'), mouse_y_invert: setting('set-invert') ? 1 : 0,
+            key_jump: 57, key_lookup: 73, key_lookdown: 81, key_lookcenter: 71,
+            mouseb_use: 1, mouseb_jump: -1, mouseb_prevweapon: 4, mouseb_nextweapon: 3,
+            crispy_uncapped: fps === 35 ? 0 : 1, crispy_fpslimit: fps === 35 ? 0 : fps, crispy_vsync: 1,
+            crispy_widescreen: 1, crispy_smoothscaling: 1,
+            crispy_mouselook: 1, crispy_freeaim: 1, crispy_jump: 1, crispy_pitch: 1, crispy_centerweapon: 1,
+            crispy_crosshair: setting('set-crosshair') ? 2 : 0, crispy_crosshairtarget: 1, crispy_crosshairhealth: 1,
+            crispy_coloredhud: 3, crispy_bobfactor: 0, crispy_soundfix: 1, crispy_soundfull: 0,
+            ...preset,
+        };
+        const lines = values => Object.entries(values).map(([k, v]) => `${k.padEnd(30)}${v}`).join('\n') + '\n';
+        return {'default.cfg': lines(vanilla), 'extra.cfg': lines(extended)};
     }
 
     // ---------- Downloads ----------
@@ -168,15 +231,14 @@
         }],
         onRuntimeInitialized: () => resolveReady(),
         print: engineMessage,
-        printErr: text => console.warn(text),
+        printErr: text => { if (debug) console.warn(text); },
         setStatus: () => {},
     };
 
     function engineArgs(extra) {
         const args = ['-iwad', 'freedm.wad', '-file', 'fragline.wad', '-window', '-nogui', '-nomusic',
-            '-config', $('smooth-play').checked ? 'smooth.cfg' : 'default.cfg', '-extraconfig', 'extra.cfg',
-            '-servername', 'Fragline', '-pet', playerName()];
-        if ($('mute-game').checked) args.push('-nosound');
+            '-config', 'default.cfg', '-extraconfig', 'extra.cfg', '-servername', 'Fragline', '-pet', playerName()];
+        if (!setting('set-sound')) args.push('-nosound');
         return args.concat(extra);
     }
 
@@ -184,8 +246,8 @@
         if (state.running) return;
         await engineReady;
         state.running = true;
+        for (const [name, text] of Object.entries(engineConfigs())) Module.FS.writeFile(`/${name}`, text);
         document.body.classList.add('playing');
-        $('settings').disabled = true;
         $('canvas').focus({preventScroll: true});
         callMain(args);
     }
@@ -198,7 +260,6 @@
     }
 
     // Text the engine prints as "doom: <id>, <message>".
-    const debug = new URLSearchParams(location.search).has('debug');
     function engineMessage(text) {
         if (debug) console.log(text);
         if (!text.startsWith('doom: ')) return;
@@ -225,7 +286,7 @@
                 else fail('Could not connect', state.host ? 'The room server did not respond.' : 'Could not reach the host. Check that the host still has the room open.');
                 break;
             case 10:
-                matchStarted();
+                if (state.room) matchStarted();
                 break;
             case 12: {
                 const name = /client '(.*)'/.exec(detail)?.[1] || 'A player';
@@ -235,13 +296,18 @@
         }
     }
 
-    function matchStarted() {
+    function enterMatch() {
         state.started = true;
-        stopPolling();
         document.body.classList.add('in-match');
         $('panel').hidden = true;
         $('canvas').focus({preventScroll: true});
-        toast('Click the game to capture the mouse. Esc releases it.', 6000);
+        renderSettingValues();
+        toast('Click to aim with the mouse. Esc opens the game menu.', 6000);
+    }
+
+    function matchStarted() {
+        stopPolling();
+        enterMatch();
         if (state.room && state.host) {
             fetch(`${relay}/api/room/${state.room}/start`, {headers: {'X-Fragline': '1'}, cache: 'no-store'}).catch(() => {});
         }
@@ -250,6 +316,30 @@
     function confirmLeave(event) {
         event.preventDefault();
         event.returnValue = '';
+    }
+
+    // ---------- Full screen ----------
+
+    // Must run inside a click handler: browsers only allow full screen and
+    // keyboard lock in response to the player's own input.
+    function enterImmersive() {
+        if (!setting('set-fullscreen') || document.fullscreenElement) return;
+        const root = document.documentElement;
+        root.requestFullscreen?.({navigationUI: 'hide'}).then(() => {
+            // Keep Esc for the game menu instead of leaving full screen (Chromium).
+            navigator.keyboard?.lock?.(['Escape']).catch(() => {});
+        }).catch(() => {});
+    }
+
+    function exitImmersive() {
+        navigator.keyboard?.unlock?.();
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    }
+
+    function toggleFullscreen() {
+        if (document.fullscreenElement) exitImmersive();
+        else document.documentElement.requestFullscreen?.().catch(() => toast('Full screen is not available here.'));
+        $('canvas').focus({preventScroll: true});
     }
 
     // ---------- Rooms ----------
@@ -297,6 +387,7 @@
     async function createRoom() {
         const button = $('create-room');
         button.disabled = true;
+        enterImmersive();
         try {
             const players = $('match-players').value;
             const {ok, data} = await api(`newroom?players=${players}`);
@@ -317,14 +408,12 @@
     }
 
     async function practice() {
+        enterImmersive();
         $('wait-title').textContent = 'Starting practice…';
         show('wait');
         await engineReady;
-        $('panel').hidden = true;
-        state.started = true;
-        document.body.classList.add('in-match');
+        enterMatch();
         await launch(engineArgs(matchArgs()));
-        toast('Click the game to capture the mouse. Esc releases it.', 6000);
     }
 
     async function checkRoom(code) {
@@ -346,6 +435,7 @@
     }
 
     async function joinRoom() {
+        enterImmersive();
         $('player-name').value = $('join-name').value;
         state.host = false;
         showLobby();
@@ -373,13 +463,21 @@
         toast('Invite link copied.');
     }
 
-    // ---------- Page controls ----------
+    // ---------- Page extras ----------
 
-    function fullscreen() {
-        const game = $('game');
-        if (document.fullscreenElement) document.exitFullscreen();
-        else game.requestFullscreen?.().catch(() => toast('Fullscreen is not available here.'));
-        $('canvas').focus({preventScroll: true});
+    function fpsMeter() {
+        const el = $('fps-meter');
+        let frames = 0, last = performance.now();
+        const tick = now => {
+            frames++;
+            if (now - last >= 500) {
+                el.textContent = `${Math.round(frames * 1000 / (now - last))} FPS`;
+                frames = 0;
+                last = now;
+            }
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
     }
 
     async function touchControls() {
@@ -399,22 +497,24 @@
         };
         const held = new Map();
         const set = (code, down) => { if (!!held.get(code) !== down) { held.set(code, down); key(code, down); } };
-        const W = 87, S = 83, A = 65, D = 68, TURN_LEFT = 79, TURN_RIGHT = 80, FIRE = 32, USE = 69, ENTER = 13;
+        const W = 87, S = 83, A = 65, D = 68, TURN_LEFT = 37, TURN_RIGHT = 39, FIRE = 17, USE = 69, JUMP = 32;
         const move = nipplejs.create({zone: $('stick-left'), mode: 'static', position: {left: '50%', top: '50%'}, color: '#ff7a2f'});
         const aim = nipplejs.create({zone: $('stick-right'), mode: 'static', position: {left: '50%', top: '50%'}, color: '#ff7a2f'});
         move.on('move', (_, data) => {
             const active = data.distance > 18, angle = data.angle.radian;
             const x = Math.cos(angle), y = Math.sin(angle);
             set(W, active && y > 0.38); set(S, active && y < -0.38);
-            set(TURN_LEFT, active && x < -0.38); set(TURN_RIGHT, active && x > 0.38);
-        }).on('end', () => [W, S, TURN_LEFT, TURN_RIGHT].forEach(code => set(code, false)));
-        aim.on('start', () => { set(FIRE, true); set(ENTER, true); })
+            set(A, active && x < -0.38); set(D, active && x > 0.38);
+        }).on('end', () => [W, S, A, D].forEach(code => set(code, false)));
+        aim.on('start', () => set(FIRE, true))
             .on('move', (_, data) => {
-                const strafe = data.distance > 18 ? data.direction?.x : null;
-                set(A, strafe === 'left'); set(D, strafe === 'right');
-                set(USE, data.distance > 18 && data.direction?.y === 'up');
+                const far = data.distance > 18;
+                set(TURN_LEFT, far && data.direction?.x === 'left');
+                set(TURN_RIGHT, far && data.direction?.x === 'right');
+                set(USE, far && data.direction?.y === 'up');
+                set(JUMP, far && data.direction?.y === 'down');
             })
-            .on('end', () => [FIRE, ENTER, A, D, USE].forEach(code => set(code, false)));
+            .on('end', () => [FIRE, TURN_LEFT, TURN_RIGHT, USE, JUMP].forEach(code => set(code, false)));
     }
 
     function registerServiceWorker() {
@@ -422,10 +522,28 @@
         navigator.serviceWorker.register(`sw.js?v=${VERSION}`).catch(error => console.warn('Offline cache unavailable:', error));
     }
 
+    function installPrompt() {
+        let deferred = null;
+        window.addEventListener('beforeinstallprompt', event => {
+            event.preventDefault();
+            deferred = event;
+            $('install-app').hidden = false;
+        });
+        $('install-app').addEventListener('click', async () => {
+            if (!deferred) return;
+            deferred.prompt();
+            await deferred.userChoice.catch(() => {});
+            deferred = null;
+            $('install-app').hidden = true;
+        });
+    }
+
     function start() {
         bindSettings();
         renderProgress();
         $('new-match').addEventListener('click', () => show('create'));
+        $('open-settings').addEventListener('click', () => { state.back = 'home'; show('settings'); });
+        $('open-help').addEventListener('click', () => show('help'));
         $('create-room').addEventListener('click', createRoom);
         $('practice').addEventListener('click', practice);
         $('join-form').addEventListener('submit', event => { event.preventDefault(); goToCode(); });
@@ -439,10 +557,12 @@
         for (const button of document.querySelectorAll('[data-home]')) {
             button.addEventListener('click', () => { if (state.running) location.href = '/'; else { history.replaceState(null, '', '/'); show('home'); } });
         }
-        $('fullscreen').addEventListener('click', fullscreen);
+        $('fullscreen').addEventListener('click', toggleFullscreen);
         $('canvas').addEventListener('click', () => $('canvas').focus({preventScroll: true}));
         window.addEventListener('popstate', () => { if (!state.running) location.reload(); });
         window.addEventListener('error', event => console.error(event.error || event.message));
+        installPrompt();
+        fpsMeter();
 
         if (!supported) {
             fail('Browser not supported', 'Fragline needs a current version of Chrome, Edge, Firefox or Safari.');
