@@ -285,5 +285,8 @@ void D_CheckNetGame (void)
             printf(".\n");
         }
     }
+
+    // [fragline] Tell the web page the match is running.
+    printf("doom: 10, game started\n");
 }
 

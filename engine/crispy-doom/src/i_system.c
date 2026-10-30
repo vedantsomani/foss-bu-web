@@ -18,6 +18,8 @@
 
 
 #include <stdlib.h>
+
+#include <emscripten.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -274,7 +276,9 @@ void I_Quit (void)
 
     SDL_Quit();
 
-    exit(0);
+    // [fragline] Stop the browser main loop rather than exiting the page.
+    emscripten_cancel_main_loop();
+    emscripten_force_exit(0);
 }
 
 

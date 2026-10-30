@@ -21,6 +21,7 @@
 
 
 #include <ctype.h>
+#include <emscripten.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -623,10 +624,9 @@ void D_DoomLoop (void)
         wipegamestate = gamestate;
     }
 
-    while (1)
-    {
-        D_RunFrame();
-    }
+    // [fragline] Let the browser drive frames with requestAnimationFrame, so
+    // the game renders once per display refresh (60, 120, 144 Hz...).
+    emscripten_set_main_loop(D_RunFrame, 0, 0);
 }
 
 

@@ -18,6 +18,8 @@
 
 #include "SDL.h"
 
+#include <emscripten.h>
+
 #include "i_timer.h"
 #include "m_fixed.h" // [crispy]
 #include "doomtype.h"
@@ -79,7 +81,8 @@ uint64_t I_GetTimeUS(void)
 
 void I_Sleep(int ms)
 {
-    SDL_Delay(ms);
+    // [fragline] Yield to the browser instead of blocking its main thread.
+    emscripten_sleep(ms);
 }
 
 void I_WaitVBL(int count)

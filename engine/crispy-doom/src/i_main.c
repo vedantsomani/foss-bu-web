@@ -40,6 +40,12 @@
 
 void D_DoomMain (void);
 
+// [fragline] Export main under its plain name so the web page can start the
+// game with Module.callMain(args); some clang/emscripten pairings otherwise
+// rename main(argc, argv) and the loader cannot find it.
+#ifdef __EMSCRIPTEN__
+__attribute__((export_name("main")))
+#endif
 int main(int argc, char **argv)
 {
     // save arguments

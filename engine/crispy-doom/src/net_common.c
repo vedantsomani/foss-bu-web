@@ -33,7 +33,8 @@
 
 // connections time out after 30 seconds
 
-#define CONNECTION_TIMEOUT_LEN 30
+// [fragline] Browsers drop out fast; give up on a silent peer after 10 s.
+#define CONNECTION_TIMEOUT_LEN 10
 
 // maximum time between sending packets
 

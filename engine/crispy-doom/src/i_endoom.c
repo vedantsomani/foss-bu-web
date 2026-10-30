@@ -64,6 +64,9 @@ void I_Endoom(byte *endoom_data)
     {
         TXT_UpdateScreen();
 
+        // [fragline] There is no text console to wait on in the browser.
+        break;
+
         if (TXT_GetChar() > 0)
         {
             break;

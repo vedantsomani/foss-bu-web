@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <emscripten.h>
+
 #include "d_event.h"
 #include "d_loop.h"
 #include "d_ticcmd.h"
@@ -35,7 +37,7 @@
 #include "net_io.h"
 #include "net_query.h"
 #include "net_server.h"
-#include "net_sdl.h"
+#include "net_websockets.h"
 #include "net_loop.h"
 
 #include "crispy.h"
@@ -52,7 +54,10 @@ typedef struct
 // received before we bail out and render a frame anyway.
 // Vanilla Doom used 20 for this value, but we use a smaller value
 // instead for better responsiveness of the menu when we're stuck.
-#define MAX_NETGAME_STALL_TICS  5
+#define MAX_NETGAME_STALL_TICS  2
+
+// [fragline] This player's id on the WebSocket relay (the server is always 1).
+uint32_t instanceUID;
 
 //
 // gametic is the tic about to (or currently being) run
@@ -260,7 +265,7 @@ static void D_Disconnected(void)
 
     // disconnected from server
 
-    printf("Disconnected from server.\n");
+    printf("doom: 9, disconnected from server\n");
 }
 
 //
@@ -449,10 +454,10 @@ boolean D_InitNetGame(net_connect_data_t *connect_data)
     if (M_CheckParm("-server") > 0
      || M_CheckParm("-privateserver") > 0)
     {
+        instanceUID = 1;
         NET_SV_Init();
         NET_SV_AddModule(&net_loop_server_module);
-        NET_SV_AddModule(&net_sdl_module);
-        NET_SV_RegisterWithMaster();
+        NET_SV_AddModule(&net_websockets_module);
 
         net_loop_client_module.InitClient();
         addr = net_loop_client_module.ResolveAddress(NULL);
@@ -460,24 +465,11 @@ boolean D_InitNetGame(net_connect_data_t *connect_data)
     }
     else
     {
-        //!
-        // @category net
-        //
-        // Automatically search the local LAN for a multiplayer
-        // server and join it.
-        //
-
-        i = M_CheckParm("-autojoin");
-
-        if (i > 0)
-        {
-            addr = NET_FindLANServer();
-
-            if (addr == NULL)
-            {
-                I_Error("No server found on local LAN");
-            }
-        }
+        // [fragline] Random relay id from the browser's crypto source; ids 0
+        // and 1 are reserved for the relay and the server.
+        instanceUID = 2 + (uint32_t) EM_ASM_INT({
+            return crypto.getRandomValues(new Uint32Array(1))[0] >>> 2;
+        });
 
         //!
         // @arg <address>
@@ -491,16 +483,15 @@ boolean D_InitNetGame(net_connect_data_t *connect_data)
 
         if (i > 0)
         {
-            net_sdl_module.InitClient();
-            addr = net_sdl_module.ResolveAddress(myargv[i+1]);
+            // [fragline] Clients always connect to the server, uid 1,
+            // through the relay given with -wss.
+            net_websockets_module.InitClient();
+            addr = net_websockets_module.ResolveAddress("1");
             NET_ReferenceAddress(addr);
-
-            if (addr == NULL)
-            {
-                I_Error("Unable to resolve '%s'\n", myargv[i+1]);
-            }
         }
     }
+
+    printf("doom: 8, uid is %u\n", instanceUID);
 
     if (addr != NULL)
     {
@@ -511,7 +502,7 @@ boolean D_InitNetGame(net_connect_data_t *connect_data)
 
         if (!NET_CL_Connect(addr, connect_data))
         {
-            I_Error("D_InitNetGame: Failed to connect to %s:\n%s\n",
+            I_Error("doom: 7, failed to connect to %s\n%s\n",
                     NET_AddrToString(addr), net_client_reject_reason);
         }
 

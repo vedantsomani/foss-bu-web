@@ -1063,7 +1063,6 @@ boolean NET_CL_Connect(net_addr_t *addr, net_connect_data_t *data)
 {
     int start_time;
     int last_send_time;
-    boolean sent_hole_punch;
 
     server_addr = addr;
     NET_ReferenceAddress(addr);
@@ -1086,7 +1085,6 @@ boolean NET_CL_Connect(net_addr_t *addr, net_connect_data_t *data)
 
     net_client_connected = true;
     net_client_received_wait_data = false;
-    sent_hole_punch = false;
 
     NET_Conn_InitClient(&client_connection, addr, NET_PROTOCOL_UNKNOWN);
 
@@ -1106,18 +1104,11 @@ boolean NET_CL_Connect(net_addr_t *addr, net_connect_data_t *data)
             last_send_time = nowtime;
         }
 
-        // time out after 5 seconds
-        if (nowtime - start_time > 5000)
+        // [fragline] The host may still be loading; wait up to a minute.
+        if (nowtime - start_time > 60000)
         {
             SetRejectReason("No response from server");
             break;
-        }
-
-        if (!sent_hole_punch && nowtime - start_time > 2000)
-        {
-            NET_Log("client: no response to SYN, requesting hole punch");
-            NET_RequestHolePunch(client_context, addr);
-            sent_hole_punch = true;
         }
 
         // run client code
@@ -1213,7 +1204,10 @@ void NET_CL_Init(void)
 
     if (net_player_name == NULL)
     {
-        net_player_name = NET_GetRandomPetName();
+        // [fragline] Player name chosen in the lobby.
+        int i = M_CheckParmWithArgs("-pet", 1);
+
+        net_player_name = i > 0 ? myargv[i + 1] : NET_GetRandomPetName();
     }
 }
 
