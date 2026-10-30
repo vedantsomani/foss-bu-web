@@ -1,4 +1,4 @@
-# FOSS-BU Arena — browser edition
+# FOSS-BU Arena â€” browser edition
 
 Browser-first FreeDM arena with two-player online rooms, hosted together on Cloudflare Workers and Durable Objects. Open the website on Windows, Linux/Arch/CachyOS, or macOS using a modern desktop browser. Share the invite link or eight-character room code, choose names, and keep both tabs open. The host selects Next; the match starts when both players connect.
 

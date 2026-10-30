@@ -404,7 +404,7 @@ var sendkey = (keys, type) => {
 if (hasWebAssembly()) {
     var Module = {
         onRuntimeInitialized: () => {
-            document.getElementById("load-status").textContent = "BROWSER EDITION · 2 PLAYERS · READY";
+            document.getElementById("load-status").textContent = "BROWSER EDITION Â· 2 PLAYERS Â· READY";
             room = window.location.pathname.slice(1).toLowerCase();
             if (room.match(/^[a-z2-9]{8}$/)) {
                 fetch(`${base}/api/room/${room}`)
