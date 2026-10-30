@@ -69,8 +69,8 @@
                 }
             } else {
                 // Move between lobby actions; keyboard remains available for name/code entry.
-                const actions = Array.from(document.querySelectorAll('button,a.btn,input'))
-                    .filter(el => el.getClientRects().length && !el.disabled && !el.classList.contains('grey'));
+                const actions = Array.from(document.querySelectorAll('#panel button, #panel input, #panel select'))
+                    .filter(el => el.getClientRects().length && !el.disabled);
                 const direction = buttons.has(13) && !previous.has(13) ? 1 : buttons.has(12) && !previous.has(12) ? -1 : 0;
                 if (direction && actions.length) {
                     const index = actions.indexOf(document.activeElement);

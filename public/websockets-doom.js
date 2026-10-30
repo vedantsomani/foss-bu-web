@@ -5083,8 +5083,13 @@ function _emscripten_cancel_main_loop() {
  Browser.mainLoop.func = null;
 }
 
+// The engine seeds its network player id from the wall clock, so players who
+// start together get the same id and the relay rejects them. A random per-tab
+// offset keeps ids unique; game timing uses the monotonic clock and is unaffected.
+var dateSalt = crypto.getRandomValues(new Uint32Array(1))[0] % 2147483648;
+
 function _emscripten_date_now() {
- return Date.now();
+ return Date.now() + dateSalt;
 }
 
 function withStackSave(f) {

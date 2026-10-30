@@ -1,10 +1,11 @@
 {
-  "name": "foss-bu-web",
-  "version": "0.2.0",
+  "name": "fragline",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "start": "wrangler dev --ip 127.0.0.1 --port 8765",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "node tests/static.test.cjs && node tests/controller.test.cjs && python3 tests/test_lan.py && node tests/relay.test.cjs && node tests/browser.test.cjs"
   },
   "devDependencies": {
     "wrangler": "4.156.0"

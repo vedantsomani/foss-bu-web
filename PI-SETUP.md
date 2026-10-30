@@ -1,6 +1,6 @@
 # Local Raspberry Pi setup
 
-The Pi serves files and relays game packets; each laptop runs the WebAssembly game. Two-player rooms only. This package has been tested on Windows using a local server; Raspberry Pi hardware and physical controllers have not yet been tested.
+The Pi serves the game files and relays game packets; each laptop runs the whole game in its browser. Rooms hold 2–4 players. The local server and matches have been tested in headless browsers on Linux; Raspberry Pi hardware, real Wi-Fi and physical controllers have not yet been tested.
 
 ## Network
 
@@ -24,13 +24,13 @@ Initial dependency installation requires Internet. Once the environment exists, 
 .venv/bin/python lan_server.py --port 8765
 ```
 
-Keep the server running. Both laptops open the printed Pi Wi-Fi URL, for example http://192.168.1.50:8765. One creates a room, shares the link/code and selects Next. The other joins. Both tabs must remain visible. Do not use localhost on the laptops: that points to each laptop, not the Pi. Reserve the Pi Wi-Fi address on your router if possible.
+Keep the server running. Every laptop opens the printed Pi Wi-Fi URL, for example http://192.168.1.50:8765. One player creates a room (choosing map, player count and time limit) and shares the link or code; the others join. The match starts when everyone has joined. All tabs must remain visible. Do not use localhost on the laptops: that points to each laptop, not the Pi. Reserve the Pi Wi-Fi address on your router if possible.
 
-No external fonts or scripts are needed by the local page. Game data, controller code and touch-control dependencies are included. GitHub/source links are optional outbound links.
+No external fonts or scripts are needed by the local page. Game data, controller code and touch-control dependencies are included. The server keeps the files in memory, sends text files gzip-compressed and answers repeat requests with 304 Not Modified, so reloads are quick over Wi-Fi. The first load is about 11 MB per laptop.
 
-## Controllers need trusted HTTPS
+## Controllers and the offline cache need trusted HTTPS
 
-Modern browsers restrict the Gamepad API to secure contexts: HTTPS or localhost. Plain HTTP at the Pi IP supports keyboard/mouse; it cannot promise controller access. The public Cloudflare website already uses HTTPS, but using it still routes the match through Cloudflare.
+Modern browsers restrict the Gamepad API and service workers (the offline cache) to secure contexts: HTTPS or localhost. Plain HTTP at the Pi IP supports keyboard/mouse; it cannot promise controller access. The public Cloudflare website already uses HTTPS, but using it still routes the match through Cloudflare.
 
 For controller support while keeping gameplay local, install Caddy on the Pi following https://caddyserver.com/docs/install and adapt Caddyfile.example to the reserved Pi Wi-Fi address. Its configuration uses tls internal and proxies HTTP and WebSockets to 127.0.0.1:8765. Run the backend as above and Caddy with your adapted configuration. Open https://PI_WIFI_IP on both laptops.
 
@@ -43,8 +43,7 @@ Run Start Wi-Fi Game.cmd on the Windows laptop (Python 3.11+ required). It insta
 ## Tests
 
 ```sh
-python tests/test_lan.py
-node tests/controller.test.cjs
+npm test
 ```
 
-Node is needed only for the controller mapping test or Cloudflare development, not to run the Python LAN server. These tests do not establish physical controller compatibility, real Wi-Fi performance, or Raspberry Pi stability.
+Node is needed only for the tests and Cloudflare development, not to run the Python LAN server. These tests do not establish physical controller compatibility, real Wi-Fi performance, or Raspberry Pi stability.

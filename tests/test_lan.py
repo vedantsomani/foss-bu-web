@@ -1,59 +1,64 @@
+"""Static file serving tests for lan_server.py (relay rules are in tests/relay.test.cjs)."""
 import asyncio
-import json
-import struct
-import unittest
-import urllib.request
-import urllib.error
+import gzip
 import sys
+import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import lan_server as app
-from websockets.asyncio.client import connect
-from websockets.asyncio.server import serve
-from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-class LanFlow(unittest.IsolatedAsyncioTestCase):
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import lan_server as app  # noqa: E402
+from websockets.asyncio.server import serve  # noqa: E402
+
+
+class LanStatic(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         app.ROOMS.clear()
-        self.server = await serve(app.relay, '127.0.0.1', 0, process_request=app.route, compression=None, max_size=65536, close_timeout=1)
-        self.port = self.server.sockets[0].getsockname()[1]
-        self.base = f'http://127.0.0.1:{self.port}'
+        self.server = await serve(app.relay, '127.0.0.1', 0, process_request=app.route,
+                                  compression=None, max_size=65536, close_timeout=1)
+        self.base = f'http://127.0.0.1:{self.server.sockets[0].getsockname()[1]}'
+
     async def asyncTearDown(self):
         self.server.close()
         await self.server.wait_closed()
-    async def get(self, path):
-        def fetch():
-            with urllib.request.urlopen(self.base + path, timeout=5) as r:
-                return r.read(), r.headers.get('Content-Type', '')
-        return await asyncio.to_thread(fetch)
-    async def test_complete_room_flow(self):
-        data, _ = await self.get('/api/newroom')
-        code = json.loads(data)['room']
-        page, _ = await self.get('/' + code)
-        self.assertIn(b'controller.js', page)
-        for name in ['freedm.wad','fossbu.wad','websockets-doom.wasm','smooth.cfg','vendor/clipboard.min.js','vendor/nipplejs.js']:
-            body, kind = await self.get('/' + name)
-            self.assertEqual(body, (app.PUBLIC / name).read_bytes())
-            if name.endswith('.wasm'): self.assertEqual(kind, 'application/wasm')
-        url = f'ws://127.0.0.1:{self.port}/api/ws/{code}'
-        async with connect(url, compression=None) as host, connect(url, compression=None) as guest:
-            await host.send(struct.pack('<II',0,1))
-            await guest.send(struct.pack('<II',1,2)+b'guest')
-            self.assertEqual(await asyncio.wait_for(host.recv(),2), struct.pack('<I',2)+b'guest')
-            await host.send(struct.pack('<II',2,1)+b'host')
-            self.assertEqual(await asyncio.wait_for(guest.recv(),2), struct.pack('<I',1)+b'host')
-            with self.assertRaises(InvalidStatus) as err:
-                async with connect(url): pass
-            self.assertEqual(err.exception.response.status_code,409)
-            await guest.send('bad packet')
-            with self.assertRaises(ConnectionClosed) as err: await guest.recv()
-            self.assertEqual(err.exception.rcvd.code,1003)
-            await self.get('/api/room/'+code+'/started')
-            with self.assertRaises(InvalidStatus):
-                async with connect(url): pass
-    async def test_missing_and_path_escape(self):
-        for path in ['/api/room/abcdefgh','/../lan_server.py','/%2e%2e/lan_server.py']:
-            with self.assertRaises(urllib.error.HTTPError) as err: await self.get(path)
-            self.assertEqual(err.exception.code,404)
 
-if __name__ == '__main__': unittest.main()
+    async def get(self, path, headers=None):
+        def fetch():
+            request = urllib.request.Request(self.base + path, headers=headers or {})
+            try:
+                with urllib.request.urlopen(request, timeout=10) as r:
+                    return r.status, r.read(), r.headers
+            except urllib.error.HTTPError as err:
+                return err.code, err.read(), err.headers
+        return await asyncio.to_thread(fetch)
+
+    async def test_pages_and_game_files(self):
+        status, page, headers = await self.get('/')
+        self.assertEqual(status, 200)
+        self.assertIn(b'game.js', page)
+        self.assertIn('text/html', headers['Content-Type'])
+        self.assertEqual((await self.get('/abcdefgh'))[1], page)
+        for name in ['freedm.wad.gz', 'websockets-doom.wasm.gz', 'fragline.wad', 'extra.cfg', 'game.js', 'sw.js']:
+            status, body, _ = await self.get('/' + name)
+            self.assertEqual(status, 200, name)
+            self.assertEqual(body, (app.PUBLIC / name).read_bytes(), name)
+
+    async def test_gzip_and_revalidation(self):
+        status, body, headers = await self.get('/game.js', {'Accept-Encoding': 'gzip'})
+        self.assertEqual(headers['Content-Encoding'], 'gzip')
+        self.assertEqual(gzip.decompress(body), (app.PUBLIC / 'game.js').read_bytes())
+        # Already-compressed downloads are sent as they are.
+        _, _, headers = await self.get('/freedm.wad.gz', {'Accept-Encoding': 'gzip'})
+        self.assertIsNone(headers['Content-Encoding'])
+        etag = (await self.get('/game.js'))[2]['ETag']
+        status, body, _ = await self.get('/game.js', {'If-None-Match': etag})
+        self.assertEqual((status, body), (304, b''))
+
+    async def test_missing_and_path_escape(self):
+        for path in ['/api/room/abcdefgh', '/../lan_server.py', '/%2e%2e/lan_server.py', '/nope.txt']:
+            self.assertEqual((await self.get(path))[0], 404, path)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,58 +1,172 @@
 <!DOCTYPE html>
-<html lang="en-us">
-  <head>
-    <meta charset="utf-8">
-    <title>FOSS-BU Arena</title>
-    <link rel="shortcut icon" href="favicon.ico" type="image/x-icon" />
-    <link rel="stylesheet" href="romero.css" /><link rel="stylesheet" href="arena.css" />
-    <meta name="viewport" content="minimal-ui, width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta property="og:title" content="FOSS-BU Arena" />
-    <meta property="og:description" content="FOSS-BU Arena" />
-    <meta property="og:url" content="https://foss-bu-web.vedantsomani12.workers.dev" />
-    <meta property="og:image" content="https://foss-bu-web.vedantsomani12.workers.dev/share.png" />
-    <meta name="twitter:card" content="summary_large_image" />
-    
-    <meta name="twitter:description" content="FOSS-BU Arena" />
-    <meta name="twitter:image" content="https://foss-bu-web.vedantsomani12.workers.dev/share.png" />
-  </head>
-  <body class="noselect">
-<header><a href="/">FOSS-BU <span>ARENA</span></a><span class="badge">BROWSER EDITION Â· 2 PLAYERS</span></header>
-    <div id="container">
-      <div id="mobile">
-        <h1>For a better mobile experience, click "Hide Toolbar" in the URL toolbar</h1>
-        <img src="hidetoolbar.png" />
-      </div>
-      <div id="monitor">
-        <div id="monitorscreen">
-          <canvas
-            id="canvas"
-            oncontextmenu="event.preventDefault()"
-            tabindex="-1"
-          ></canvas>
-          <div id="menu">
-            <div id="logo" class="vspace" style="display:none"></div>
-            <div id="buttons" style="display:none">
-              <button type="button" class="btn grey" id="multiplayer">Create room</button>
-              <button type="button" class="btn grey" id="solo">Explore the arena</button><div class="joinbox"><label for="roomcode">Have a room code?</label><input id="roomcode" maxlength="8" autocomplete="off" placeholder="ROOM CODE" aria-describedby="roomerror"><button class="btn secondary" id="joinroom" type="button">Join room</button><p id="roomerror" role="status"></p></div>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Fragline</title>
+  <meta name="description" content="Retro deathmatch for 2–4 players that runs in your browser. Create a room, share the code, play.">
+  <meta name="theme-color" content="#0d0b0a">
+  <!-- Leave empty to use this site for rooms; set to another origin to use a separate relay. -->
+  <meta name="fragline-relay" content="">
+  <meta property="og:title" content="Fragline">
+  <meta property="og:description" content="Retro deathmatch for 2–4 players that runs in your browser.">
+  <meta property="og:image" content="https://fragline.vedantsomani12.workers.dev/share.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css?v=1.0.0">
+  <link rel="preload" href="websockets-doom.wasm.gz?v=1.0.0" as="fetch" crossorigin>
+  <link rel="preload" href="freedm.wad.gz?v=1.0.0" as="fetch" crossorigin>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">FRAG<span>LINE</span></a>
+    <span class="tagline">Browser deathmatch · 2–4 players</span>
+  </header>
+
+  <main class="stage">
+    <div id="game" class="game">
+      <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+
+      <section id="panel" class="panel">
+        <div id="screen-home" class="screen" hidden>
+          <h1 class="logo">FRAG<span>LINE</span></h1>
+          <p class="lead">Retro deathmatch in your browser. Create a room, share the code, frag your friends.</p>
+          <div class="field name-field">
+            <label for="player-name">Your name</label>
+            <div class="row">
+              <input id="player-name" maxlength="20" autocomplete="nickname" spellcheck="false">
+              <button id="random-name" class="btn ghost icon" type="button" aria-label="Random name" title="Random name">↻</button>
             </div>
-            <div id="text" style="display:none"><h1>FOSS-BU Arena</h1><h1>Create a room, share the code, and play together.</h1></div>
+          </div>
+          <button id="new-match" class="btn primary wide" type="button">New match</button>
+          <form id="join-form" class="join" novalidate>
+            <label for="room-code">Have a room code?</label>
+            <div class="row">
+              <input id="room-code" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ROOM CODE" aria-describedby="room-error">
+              <button class="btn" type="submit">Join</button>
+            </div>
+            <p id="room-error" class="error" role="status"></p>
+          </form>
+        </div>
+
+        <div id="screen-create" class="screen" hidden>
+          <h2>New match</h2>
+          <div class="grid">
+            <label class="field">Map
+              <select id="match-map"></select>
+            </label>
+            <label class="field">Players
+              <select id="match-players">
+                <option value="2" selected>2 players</option>
+                <option value="3">3 players</option>
+                <option value="4">4 players</option>
+              </select>
+            </label>
+            <label class="field">Time limit
+              <select id="match-time">
+                <option value="5">5 minutes</option>
+                <option value="10" selected>10 minutes</option>
+                <option value="15">15 minutes</option>
+                <option value="20">20 minutes</option>
+                <option value="0">No limit</option>
+              </select>
+            </label>
+            <label class="field">Mode
+              <select id="match-mode">
+                <option value="deathmatch" selected>Deathmatch</option>
+                <option value="altdeath">Deathmatch 2.0 (items respawn)</option>
+              </select>
+            </label>
+          </div>
+          <div class="actions">
+            <button id="create-room" class="btn primary" type="button">Create room</button>
+            <button id="practice" class="btn" type="button">Practice alone</button>
+            <button class="btn ghost" type="button" data-home>Back</button>
           </div>
         </div>
-        <div id="footer" class="writer"></div>
-      </div>
+
+        <div id="screen-wait" class="screen" hidden>
+          <h2 id="wait-title">Checking room…</h2>
+        </div>
+
+        <div id="screen-join" class="screen" hidden>
+          <h2>Join match <span id="join-code" class="code"></span></h2>
+          <p id="join-players" class="muted"></p>
+          <label class="field name-field">Your name
+            <input id="join-name" maxlength="20" autocomplete="nickname" spellcheck="false">
+          </label>
+          <div class="actions">
+            <button id="join-room" class="btn primary" type="button">Join match</button>
+            <button class="btn ghost" type="button" data-home>Home</button>
+          </div>
+        </div>
+
+        <div id="screen-lobby" class="screen" hidden>
+          <h2 id="lobby-heading">Room ready</h2>
+          <p class="code big" id="lobby-code" aria-label="Room code"></p>
+          <div id="lobby-share" class="share">
+            <input id="lobby-link" readonly aria-label="Invite link">
+            <button id="copy-link" class="btn" type="button">Copy link</button>
+            <button id="share-link" class="btn" type="button" hidden>Share</button>
+          </div>
+          <p id="lobby-count" class="count" role="status"></p>
+          <p id="lobby-status" class="muted" role="status"></p>
+          <p id="lobby-hint" class="muted small"></p>
+          <div class="actions"><button class="btn ghost" type="button" data-home>Leave</button></div>
+        </div>
+
+        <div id="screen-message" class="screen" hidden>
+          <h2 id="message-title"></h2>
+          <p id="message-text" class="muted"></p>
+          <div class="actions"><button class="btn primary" type="button" data-home>Back to menu</button></div>
+        </div>
+
+        <div id="loader" class="loader" role="status">
+          <div class="track"><div id="load-bar" class="bar"></div></div>
+          <p id="load-text">Downloading game data…</p>
+        </div>
+      </section>
+
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+      <div id="stick-left" class="stick left"></div>
+      <div id="stick-right" class="stick right"></div>
     </div>
-<aside><fieldset id="performance-settings"><legend>Performance</legend><label><input type="checkbox" id="smooth-play"> Smoother play <small>(lower detail, fewer simultaneous sounds)</small></label><label><input type="checkbox" id="mute-game"> Sound off <small>(reduces audio work)</small></label><p>Choose before starting. Both players should keep the game tab visible; a slow or hidden tab can pause the match.</p></fieldset><fieldset><legend>Controller</legend><label><input id="controller-enabled" type="checkbox" checked> Enable controller</label> <label>Stick deadzone <select id="controller-deadzone"><option value="0.15">Small</option><option value="0.25" selected>Normal</option><option value="0.4">Large</option></select></label><p id="controller-status" role="status">Connect a controller and press a button.</p><p>Left stick: move/strafe · Right stick: turn · RT: fire · LT/L3: run · X: use · A: confirm/respawn · B/Start: menu · Y: map · LB/RB: weapon slot. Standard Xbox-style layout; labels differ on PlayStation controllers. Classic Doom has no vertical aiming.</p></fieldset><strong>How to play</strong><p>Keyboard + mouse recommended. WASD or arrows move; mouse aims; Space or click fires; E opens doors; F enters fullscreen.</p><p>Each room holds two players. The match begins when both connect. Keep the host tab open. Desktop Zandronum/Odamex matches use a separate protocol.</p><a href="https://github.com/vedantsomani/foss-bu-web">Project source</a> · <a href="credits.html">Credits & licenses</a></aside>
-    <div id="joystick1"></div>
-    <div id="joystick2"></div>
-    <script type="text/javascript" src="vendor/clipboard.min.js"></script>
-    <script type="text/javascript" src="vendor/nipplejs.js"></script>
-    <script src="config.js"></script><script type="text/javascript" src="carmack.js?v=4"></script>
-    <script type="text/javascript" src="websockets-doom.js"></script>
-    <script src="controller.js?v=1"></script>
-    
 
-  </body>
+    <div class="gamebar">
+      <p class="keys"><kbd>W</kbd><kbd>S</kbd> move · <kbd>A</kbd><kbd>D</kbd> strafe · mouse or <kbd>O</kbd><kbd>P</kbd> turn · <kbd>Click</kbd>/<kbd>Space</kbd> fire · <kbd>E</kbd> use · <kbd>Shift</kbd> run · <kbd>1</kbd>–<kbd>7</kbd> weapons · <kbd>Tab</kbd> map · <kbd>T</kbd> chat</p>
+      <button id="fullscreen" class="btn small" type="button">Fullscreen</button>
+    </div>
+  </main>
+
+  <section class="info">
+    <fieldset id="settings">
+      <legend>Settings</legend>
+      <label><input type="checkbox" id="smooth-play"> Smoother play <small>lower detail, fewer simultaneous sounds</small></label>
+      <label><input type="checkbox" id="mute-game"> Sound off</label>
+      <p class="small">Applied when the game starts.</p>
+    </fieldset>
+    <fieldset>
+      <legend>Controller</legend>
+      <label><input id="controller-enabled" type="checkbox" checked> Enable controller</label>
+      <label>Stick deadzone
+        <select id="controller-deadzone"><option value="0.15">Small</option><option value="0.25" selected>Normal</option><option value="0.4">Large</option></select>
+      </label>
+      <p id="controller-status" role="status">Connect a controller and press a button.</p>
+      <p class="small">Left stick move/strafe · right stick turn · RT fire · LT/L3 run · X use · A confirm/respawn · B/Start menu · Y map · LB/RB weapon. Xbox-style labels; PlayStation buttons sit in the same places.</p>
+    </fieldset>
+    <div class="about">
+      <h2>How it works</h2>
+      <p>Each player's browser runs the whole game. A small relay passes moves between players, so everyone needs to keep the tab open and visible: a hidden or slow tab pauses the match for everyone. Classic engine rules apply, so there's no looking up or down. Aim auto-adjusts vertically.</p>
+      <p>The first visit downloads about 11 MB. After that the game loads from your browser's cache.</p>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <a href="credits.html">Credits &amp; licenses</a> · <a href="https://github.com/vedantsomani/foss-bu-web">Source code</a>
+  </footer>
+
+  <script src="game.js?v=1.0.0"></script>
+  <script src="websockets-doom.js?v=1.0.0"></script>
+  <script src="controller.js?v=1.0.0"></script>
+</body>
 </html>
-
-

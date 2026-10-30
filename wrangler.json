@@ -1,5 +1,5 @@
 {
-  "name": "foss-bu-web",
+  "name": "fragline",
   "main": "src/index.mjs",
   "compatibility_date": "2025-01-01",
   "assets": {
@@ -23,6 +23,16 @@
       "new_sqlite_classes": [
         "Router"
       ]
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "ROOM_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
     }
   ],
   "account_id": "50652594c81ec9440bcc20ad76781df7",

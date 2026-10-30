@@ -1,1 +1,0 @@
-window.ARENA_RELAY = '';
