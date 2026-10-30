@@ -35,7 +35,7 @@ npm install
 npm start
 ```
 
-That serves the Worker locally at http://127.0.0.1:8765. To publish: `npx wrangler login`, then `npm run deploy`. The Worker is named `fragline`, so it publishes to `fragline.<your-subdomain>.workers.dev`. Update `account_id` in `wrangler.json` and the `og:image` URL in `public/index.html` for your own account or domain. Deployment is manual; pushing to GitHub does not redeploy.
+That serves the Worker locally at http://127.0.0.1:8765. To publish by hand: `npx wrangler login`, then `npm run deploy`. The Worker is named `foss-bu-web` and publishes to `foss-bu-web.vedantsomani12.workers.dev`. For automatic deploys, connect the `foss-bu-web` Worker to this GitHub repository in the Cloudflare dashboard (Workers Builds); the Worker name there must match `name` in `wrangler.json`. Update `account_id` in `wrangler.json` and the `og:image` URL in `public/index.html` for another account or domain.
 
 Local network, no Internet needed: see [PI-SETUP.md](PI-SETUP.md), or run:
 
