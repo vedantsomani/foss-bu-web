@@ -348,3 +348,8 @@ html.doc body { background: transparent; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .bg-sweep { display: none; }
 }
+
+/* Shown when a match is running but the mouse is not captured yet. */
+.click-play { position: absolute; inset: 0; display: grid; place-content: center; gap: 12px; text-align: center; background: rgba(0, 0, 0, .55); z-index: 5; }
+.click-play p { margin: 0; color: #e8dccf; font-size: 14px; }
+.click-play .btn { font-size: 18px; padding: 14px 28px; }

@@ -409,6 +409,18 @@ static int GetDirectionalInputGamepad(const int *axis_values)
 
 void I_UpdateGamepad(void)
 {
+    // [fragline] Browsers only report a controller after one of its buttons is
+    // pressed on the page, so keep looking for one about once a second.
+    if (gamepad == NULL && usejoystick && use_gamepad)
+    {
+        static int retry = 0;
+
+        if (++retry % 35 == 0)
+        {
+            I_InitGamepad();
+        }
+    }
+
     if (gamepad != NULL)
     {
         event_t ev;
@@ -516,14 +528,16 @@ void I_InitJoystick(void)
 {
     int index;
 
-    if (!usejoystick || !strcmp(joystick_guid, ""))
+    // [fragline] Gamepads do not need a remembered GUID: without one the first
+    // connected gamepad is used, which is what a web page needs.
+    if (usejoystick && use_gamepad)
     {
+        I_InitGamepad();
         return;
     }
 
-    if (use_gamepad)
+    if (!usejoystick || !strcmp(joystick_guid, ""))
     {
-        I_InitGamepad();
         return;
     }
 

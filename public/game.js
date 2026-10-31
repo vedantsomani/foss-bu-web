@@ -4,7 +4,7 @@
     const VERSION = '2.0.0';
     // Sizes are the bytes sent over the wire; tests/static.test.cjs keeps them in sync.
     const DOWNLOADS = [
-        {file: 'websockets-doom.wasm.gz', bytes: 731935, wasm: true},
+        {file: 'websockets-doom.wasm.gz', bytes: 733009, wasm: true},
         {file: 'freedm.wad.gz', bytes: 8513298, as: 'freedm.wad'},
         {file: 'fragline.wad', bytes: 68196, as: 'fragline.wad'},
     ];
@@ -143,18 +143,30 @@
             key_right: 77, key_left: 75, key_up: 17, key_down: 31, key_strafeleft: 30, key_straferight: 32,
             key_fire: 29, key_use: 18, key_strafe: 56, key_speed: 42,
             use_mouse: 1, mouseb_fire: 0, mouseb_strafe: -1, mouseb_forward: -1,
-            use_joystick: 0, joyb_speed: setting('set-autorun') ? 29 : 2,
+            mouse_sensitivity_y: setting('set-look'),
+            // Controller (Crispy's native analog gamepad support): see joystick_physical_button* below.
+            use_joystick: 1, joyb_fire: 0, joyb_strafe: -1, joyb_use: 2, joyb_jump: 1, joyb_speed: setting('set-autorun') ? 29 : 3,
             screenblocks: setting('set-hud') === 'classic' ? 10 : 15, detaillevel: 0, // 15: Crispy HUD at the screen edges
             snd_channels: 16, snd_musicdevice: 0, snd_sfxdevice: 3, usegamma: 0,
         };
         const extended = {
             fullscreen: 0, aspect_ratio_correct: 1, integer_scaling: 0, vga_porch_flash: 0, show_endoom: 0,
-            grabmouse: 1, novert: 1, mouse_sensitivity_y: setting('set-look'), mouse_y_invert: setting('set-invert') ? 1 : 0,
+            grabmouse: 1, novert: 1, mouse_y_invert: setting('set-invert') ? 1 : 0,
+            // Sticks: left moves/strafes, right turns/looks (analog). Virtual buttons 0-7 map to
+            // RT, A, X, L3, LB, RB, Start, View (SDL button ids; 22 is the right trigger).
+            use_gamepad: 1, use_analog: 1, joystick_index: 0,
+            joystick_x_axis: 2, joystick_y_axis: 1, joystick_strafe_axis: 0, joystick_look_axis: 3,
+            joystick_x_dead_zone: 15, joystick_y_dead_zone: 15, joystick_strafe_dead_zone: 15, joystick_look_dead_zone: 15,
+            joystick_turn_sensitivity: 12, joystick_move_sensitivity: 10, joystick_look_sensitivity: 12,
+            joyb_prevweapon: 4, joyb_nextweapon: 5, joyb_menu_activate: 6, joyb_toggle_automap: 7,
+            joystick_physical_button0: 22, joystick_physical_button1: 0, joystick_physical_button2: 2,
+            joystick_physical_button3: 7, joystick_physical_button4: 9, joystick_physical_button5: 10,
+            joystick_physical_button6: 6, joystick_physical_button7: 4,
             key_jump: 57, key_lookup: 73, key_lookdown: 81, key_lookcenter: 71,
             mouseb_use: 1, mouseb_jump: -1, mouseb_prevweapon: 4, mouseb_nextweapon: 3,
             crispy_uncapped: fps === 35 ? 0 : 1, crispy_fpslimit: fps === 35 ? 0 : fps, crispy_vsync: 1,
             crispy_widescreen: 1, crispy_smoothscaling: 1,
-            crispy_mouselook: 1, crispy_freeaim: 1, crispy_jump: 1, crispy_pitch: 1, crispy_centerweapon: 1,
+            crispy_mouselook: 1, crispy_freelook: 2, crispy_freeaim: 1, crispy_jump: 1, crispy_pitch: 1, crispy_centerweapon: 1,
             crispy_crosshair: setting('set-crosshair') ? 2 : 0, crispy_crosshairtarget: 1, crispy_crosshairhealth: 1,
             crispy_coloredhud: 3, crispy_bobfactor: 0, crispy_soundfix: 1, crispy_soundfull: 0,
             ...preset,
@@ -269,6 +281,8 @@
     // Text the engine prints as "doom: <id>, <message>".
     function engineMessage(text) {
         if (debug) console.log(text);
+        // The engine found a controller at start-up and reads it itself; controller.js then stays out of the way.
+        if (text.startsWith('I_InitGamepad: ') && !/No gamepad|Failed/.test(text)) window.fraglineNativePad = true;
         if (!text.startsWith('doom: ')) return;
         const comma = text.indexOf(',');
         const id = parseInt(text.slice(6, comma), 10);
@@ -309,7 +323,28 @@
         $('panel').hidden = true;
         $('canvas').focus({preventScroll: true});
         renderSettingValues();
-        toast('Click to aim with the mouse. Esc opens the game menu.', 6000);
+        if (!document.pointerLockElement && !padConnected()) $('click-play').hidden = false;
+        toast('Esc opens the game menu.', 4000);
+    }
+
+    // ---------- Mouse capture ----------
+
+    // Without pointer lock the engine follows the visible cursor, so turning and looking stop at the
+    // screen edge. Capture the mouse on the player's click; must run inside a click handler.
+    function capturePointer() {
+        const canvas = $('canvas');
+        if (document.pointerLockElement === canvas) return;
+        // Raw mouse input (no OS acceleration) where supported. Chrome on Linux rejects it, and a
+        // rejected request uses up the click, so ask for plain pointer lock there.
+        const raw = !/Linux/i.test(navigator.platform || '') || /Android/i.test(navigator.userAgent);
+        try {
+            canvas.requestPointerLock(raw ? {unadjustedMovement: true} : undefined)?.catch?.(() => {});
+        } catch { /* not available; the click-to-play layer offers another try */ }
+    }
+
+    function padConnected() {
+        try { return Array.from(navigator.getGamepads?.() || []).some(p => p?.connected && p.mapping === 'standard'); }
+        catch { return false; }
     }
 
     function matchStarted() {
@@ -415,6 +450,7 @@
     }
 
     async function practice() {
+        capturePointer();
         enterImmersive();
         $('wait-title').textContent = 'Starting practice…';
         show('wait');
@@ -716,7 +752,12 @@
             button.addEventListener('click', () => { if (state.running) location.href = '/'; else { history.replaceState(null, '', '/'); show('home'); } });
         }
         $('fullscreen').addEventListener('click', toggleFullscreen);
-        $('canvas').addEventListener('click', () => $('canvas').focus({preventScroll: true}));
+        $('canvas').addEventListener('click', () => { $('canvas').focus({preventScroll: true}); if (state.started) capturePointer(); });
+        $('click-play-btn').addEventListener('click', () => { $('click-play').hidden = true; capturePointer(); $('canvas').focus({preventScroll: true}); });
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement) $('click-play').hidden = true;
+            else if (state.started && $('panel').hidden && !padConnected()) $('click-play').hidden = false;
+        });
         window.addEventListener('popstate', () => { if (!state.running) location.reload(); });
         window.addEventListener('error', event => console.error(event.error || event.message));
         installPrompt();
