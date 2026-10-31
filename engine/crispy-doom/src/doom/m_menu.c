@@ -2407,7 +2407,9 @@ boolean M_Responder (event_t* ev)
 #define JOY_BUTTON_MAPPED(x) ((x) >= 0)
 #define JOY_BUTTON_PRESSED(x) (JOY_BUTTON_MAPPED(x) && (ev->data1 & (1 << (x))) != 0)
 
-            if (JOY_BUTTON_PRESSED(joybfire))
+            // [fragline] In menus, A (the jump button) selects like Fire does, and
+            // B (virtual button 8, unused in play) goes back like Use does.
+            if (JOY_BUTTON_PRESSED(joybfire) || JOY_BUTTON_PRESSED(joybjump))
             {
                 // Simulate a 'Y' keypress when Doom show a Y/N dialog with Fire button.
                 if (messageToPrint && messageNeedsInput)
@@ -2430,7 +2432,7 @@ boolean M_Responder (event_t* ev)
                 }
                 joywait = I_GetTime() + 5;
             }
-            if (JOY_BUTTON_PRESSED(joybuse))
+            if (JOY_BUTTON_PRESSED(joybuse) || JOY_BUTTON_PRESSED(8))
             {
                 // Simulate a 'N' keypress when Doom show a Y/N dialog with Use button.
                 if (messageToPrint && messageNeedsInput)
@@ -2444,7 +2446,8 @@ boolean M_Responder (event_t* ev)
                 }
                 else
                 {
-                    key = key_menu_back;
+                    // [fragline] Back from the top-level menu resumes the game.
+                    key = currentMenu->prevMenu ? key_menu_back : key_menu_activate;
                 }
                 joywait = I_GetTime() + 5;
             }

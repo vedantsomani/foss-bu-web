@@ -15,7 +15,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="style.css?v=2.0.1">
+  <link rel="stylesheet" href="style.css?v=2.0.2">
 </head>
 <body>
   <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
@@ -204,9 +204,14 @@
           </div>
           <div id="pane-audio" class="pane" role="tabpanel" aria-labelledby="tab-audio" hidden>
             <label class="check"><span>Sound effects</span><input type="checkbox" id="set-sound"></label>
-            <label class="field">Volume <output for="set-volume"></output>
+            <label class="field">Effects volume <output for="set-volume"></output>
               <input type="range" id="set-volume" min="0" max="15" step="1">
             </label>
+            <label class="check"><span>Music</span><input type="checkbox" id="set-music"></label>
+            <label class="field">Music volume <output for="set-musicvol"></output>
+              <input type="range" id="set-musicvol" min="0" max="15" step="1">
+            </label>
+            <p class="small muted">Music is the original soundtrack played by Doom's built-in synthesizer. Turn it off to save a little CPU on slow devices.</p>
           </div>
         </div>
         <div class="actions"><button class="btn primary" type="button" data-home>Done</button><p class="small muted note">Changes apply to the next match.</p></div>
@@ -226,9 +231,10 @@
             <dt><kbd>Tab</kbd></dt><dd>Map</dd>
             <dt><kbd>T</kbd></dt><dd>Chat</dd>
             <dt><kbd>Esc</kbd></dt><dd>Game menu</dd>
+            <dt><kbd>F2</kbd> / <kbd>F3</kbd></dt><dd>Save / load (Practice alone; kept in this browser)</dd>
           </dl>
           <div class="notes">
-            <p><strong>Controller:</strong> left stick moves, right stick turns, RT fires, A jumps, X uses, LB/RB change weapon, Start opens the menu.</p>
+            <p><strong>Controller:</strong> left stick moves, right stick turns, RT fires, A jumps, X uses, LB/RB change weapon, Start opens the menu (A selects, B goes back).</p>
             <p>Every player's browser runs the whole game and a small relay passes moves between players. Keep the tab open and in front: a hidden tab pauses the match for everyone.</p>
             <p>Install Fragline as an app from the top-right button (where your browser supports it) to play in its own window.</p>
           </div>
@@ -296,8 +302,8 @@
     <div id="stick-right" class="stick right"></div>
   </div>
 
-  <script src="game.js?v=2.0.1"></script>
-  <script src="websockets-doom.js?v=2.0.1"></script>
-  <script src="controller.js?v=2.0.1"></script>
+  <script src="game.js?v=2.0.2"></script>
+  <script src="websockets-doom.js?v=2.0.2"></script>
+  <script src="controller.js?v=2.0.2"></script>
 </body>
 </html>

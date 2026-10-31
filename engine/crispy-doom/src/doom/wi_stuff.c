@@ -2035,6 +2035,9 @@ void WI_Start(wbstartstruct_t* wbstartstruct)
     WI_initVariables(wbstartstruct);
     WI_loadData();
 
+    // [fragline] Tell the page the score screen is up, so it can say how to leave it.
+    printf("doom: 20, intermission\n");
+
     if (deathmatch)
 	WI_initDeathmatchStats();
     else if (netgame)

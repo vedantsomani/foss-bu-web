@@ -38,7 +38,8 @@ link=(
   -sINITIAL_MEMORY=134217728 -sALLOW_MEMORY_GROWTH=1
   -sFORCE_FILESYSTEM=1 -sINVOKE_RUN=0 -sEXIT_RUNTIME=0
   '-sEXPORTED_RUNTIME_METHODS=["FS","callMain","addRunDependency","removeRunDependency"]'
-  -sENVIRONMENT=web -lwebsocket.js
+  # [fragline] IDBFS keeps single-player saves in the browser's IndexedDB.
+  -sENVIRONMENT=web -lwebsocket.js -lidbfs.js
 )
 
 objs=()

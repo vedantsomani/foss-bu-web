@@ -17,6 +17,7 @@
 
 
 
+#include <emscripten.h> // [fragline]
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -2675,6 +2676,10 @@ void G_DoSaveGame (void)
     M_StringCopy(savename, savegame_file, sizeof(savename));
 
     players[consoleplayer].message = DEH_String(GGSAVED);
+
+    // [fragline] Tell the page a save was written so it can copy the
+    // savegame directory to the browser's IndexedDB.
+    EM_ASM({ if (Module.fraglineSaved) Module.fraglineSaved(); });
 
     // draw the pattern into the back screen
     R_FillBackScreen ();

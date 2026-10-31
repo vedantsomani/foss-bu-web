@@ -28,6 +28,10 @@
 #include "net_packet.h"
 #include "net_websockets.h"
 
+// [fragline] A game packet is never larger than about 1500 bytes (one Ethernet
+// frame). The relay forwards anything up to 64 KiB, so bigger messages are
+// dropped here instead of being allocated from the fixed-size zone heap.
+#define MAX_PAYLOAD 2048
 #define MAX_QUEUE_SIZE 512
 #define MAX_ADDRESSES 64
 
@@ -96,8 +100,23 @@ static EM_BOOL WebSocketMessage(int eventType, const EmscriptenWebSocketMessageE
 {
     net_packet_t *packet;
     uint32_t from;
+    int len;
 
-    if (e->isText || e->numBytes < 4)
+    // [fragline] Ignore anything that is not a well-formed binary message:
+    // text frames, no header, no data, or too large to be a game packet.
+    if (e == NULL || e->isText || e->data == NULL || e->numBytes < 4)
+    {
+        return 0;
+    }
+
+    len = (int) e->numBytes - 4;
+    if (len > MAX_PAYLOAD)
+    {
+        return 0;
+    }
+
+    // Do not allocate for a packet that would be dropped anyway.
+    if ((queue.tail + 1) % MAX_QUEUE_SIZE == queue.head)
     {
         return 0;
     }
@@ -107,9 +126,9 @@ static EM_BOOL WebSocketMessage(int eventType, const EmscriptenWebSocketMessageE
          | (uint32_t) e->data[2] << 16
          | (uint32_t) e->data[3] << 24;
 
-    packet = NET_NewPacket(e->numBytes - 4);
-    memcpy(packet->data, e->data + 4, e->numBytes - 4);
-    packet->len = e->numBytes - 4;
+    packet = NET_NewPacket(len);
+    memcpy(packet->data, e->data + 4, len);
+    packet->len = len;
     QueuePush(packet, from);
     return 0;
 }
@@ -176,7 +195,19 @@ static boolean Connect(void)
 
 static void SendRaw(uint32_t to, const byte *data, int len)
 {
-    byte *buffer = malloc(len + 8);
+    byte *buffer;
+
+    // [fragline] Never send more than the relay accepts.
+    if (len < 0 || len > MAX_PAYLOAD)
+    {
+        return;
+    }
+
+    buffer = malloc(len + 8);
+    if (buffer == NULL)
+    {
+        return;
+    }
 
     memcpy(buffer, &to, 4);
     memcpy(buffer + 4, &instanceUID, 4);

@@ -1694,6 +1694,15 @@ void D_DoomMain (void)
     D_BindVariables();
     M_LoadDefaults();
 
+    // [fragline] A bad value in a config file must not crash the game.
+    CRISPY_ClampConfig();
+    if (screenblocks < 3 || screenblocks > 17) screenblocks = 10;
+    if (detailLevel < 0 || detailLevel > 1) detailLevel = 0;
+    if (usegamma < 0 || usegamma > 4) usegamma = 0;
+    if (snd_channels < 1 || snd_channels > 64) snd_channels = 16;
+    if (sfxVolume < 0 || sfxVolume > 15) sfxVolume = 8;
+    if (musicVolume < 0 || musicVolume > 15) musicVolume = 8;
+
     // Save configuration at exit.
     I_AtExit(M_SaveDefaults, true); // [crispy] always save configuration at exit
 

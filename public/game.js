@@ -1,10 +1,10 @@
 /* Fragline browser client: downloads, menus, settings, rooms and engine start-up. */
 'use strict';
 (() => {
-    const VERSION = '2.0.1';
+    const VERSION = '2.0.2';
     // Sizes are the bytes sent over the wire; tests/static.test.cjs keeps them in sync.
     const DOWNLOADS = [
-        {file: 'websockets-doom.wasm.gz', bytes: 761005, wasm: true},
+        {file: 'websockets-doom.wasm.gz', bytes: 760246, wasm: true},
         {file: 'freedm.wad.gz', bytes: 8513298, as: 'freedm.wad'},
         {file: 'fragline.wad', bytes: 213981, as: 'fragline.wad'},
     ];
@@ -30,7 +30,7 @@
     const SETTINGS = {
         'set-graphics': 'ultra', 'set-fps': '0', 'set-hud': 'minimal', 'set-crosshair': true, 'set-showfps': false,
         'set-sens': '5', 'set-look': '5', 'set-invert': false, 'set-autorun': true,
-        'set-sound': true, 'set-volume': '10', 'set-fullscreen': true,
+        'set-sound': true, 'set-volume': '10', 'set-music': true, 'set-musicvol': '8', 'set-fullscreen': true,
         'controller-enabled': true, 'controller-deadzone': '0.25',
     };
 
@@ -109,6 +109,7 @@
             const saved = store.get(`fragline-${id}`, null);
             if (el.type === 'checkbox') el.checked = saved === null ? fallback : saved === '1';
             else el.value = saved ?? fallback;
+            if (el.tagName === 'SELECT' && el.selectedIndex < 0) el.value = fallback; // stale or edited storage
             const save = () => {
                 store.set(`fragline-${id}`, el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value);
                 renderSettingValues();
@@ -137,23 +138,30 @@
 
     // Build the two engine config files from the player's settings. Classic Doom
     // options live in default.cfg; Crispy Doom's own options in extra.cfg.
+    // Settings come from form fields that may hold edited or stale values: always hand the engine a number in range.
+    function clamp(value, min, max, fallback) {
+        const n = Number(value);
+        return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n * 100) / 100)) : fallback;
+    }
+
     function engineConfigs() {
         const preset = PRESETS[setting('set-graphics')] || PRESETS.ultra;
         const fps = Number(setting('set-fps'));
         const pad = setting('controller-enabled') ? 1 : 0;
-        const zone = Math.round(Number(setting('controller-deadzone')) * 100) || 25;
+        const zone = Math.round(clamp(setting('controller-deadzone'), 0.05, 0.9, 0.25) * 100);
         const vanilla = {
-            mouse_sensitivity: setting('set-sens'), sfx_volume: setting('set-volume'), music_volume: 0, show_messages: 1,
+            mouse_sensitivity: clamp(setting('set-sens'), 1, 20, 5), sfx_volume: clamp(setting('set-volume'), 0, 15, 10),
+            music_volume: setting('set-music') ? clamp(setting('set-musicvol'), 0, 15, 8) : 0, show_messages: 1,
             // Modern layout: WASD, arrows turn, Ctrl/click fire, E use, Alt strafe, Shift run.
             key_right: 77, key_left: 75, key_up: 17, key_down: 31, key_strafeleft: 30, key_straferight: 32,
             key_fire: 29, key_use: 18, key_strafe: 56, key_speed: 42,
             key_jump: 57, key_lookup: 73, key_lookdown: 81, key_lookcenter: 71, mouseb_jump: -1,
             use_mouse: 1, mouseb_fire: 0, mouseb_strafe: -1, mouseb_forward: -1,
-            mouse_sensitivity_y: setting('set-look'),
+            mouse_sensitivity_y: clamp(setting('set-look'), 1, 20, 5),
             // Controller (Crispy's native analog gamepad support): see joystick_physical_button* below.
             use_joystick: pad, joyb_fire: 0, joyb_strafe: -1, joyb_use: 2, joyb_jump: 1, joyb_speed: setting('set-autorun') ? 29 : 3,
             screenblocks: setting('set-hud') === 'classic' ? 10 : 15, detaillevel: 0, // 15: Crispy HUD at the screen edges
-            snd_channels: 16, snd_musicdevice: 0, snd_sfxdevice: 3, usegamma: 0,
+            snd_channels: 16, snd_musicdevice: 3, snd_sfxdevice: 3, usegamma: 0, // 3: Sound Blaster = Crispy's built-in OPL synth for music
         };
         const extended = {
             fullscreen: 0, aspect_ratio_correct: 1, integer_scaling: 0, vga_porch_flash: 0, show_endoom: 0,
@@ -167,7 +175,7 @@
             joyb_prevweapon: 4, joyb_nextweapon: 5, joyb_menu_activate: 6, joyb_toggle_automap: 7,
             joystick_physical_button0: 22, joystick_physical_button1: 0, joystick_physical_button2: 2,
             joystick_physical_button3: 7, joystick_physical_button4: 9, joystick_physical_button5: 10,
-            joystick_physical_button6: 6, joystick_physical_button7: 4,
+            joystick_physical_button6: 6, joystick_physical_button7: 4, joystick_physical_button8: 1, // 8: B (menu back)
             mouseb_use: 1, mouseb_prevweapon: 4, mouseb_nextweapon: 3,
             crispy_uncapped: fps === 35 ? 0 : 1, crispy_fpslimit: fps === 35 ? 0 : fps, crispy_vsync: 1,
             crispy_widescreen: 1, crispy_smoothscaling: 1,
@@ -235,6 +243,62 @@
         $('loader').classList.add('error');
     });
 
+    // ---------- Audio ----------
+
+    // Browsers keep an AudioContext silent until the player has interacted with the page. The engine
+    // creates its context itself (SDL), so track every context made on this page and resume them on
+    // the player's first click, key press, touch or controller button, and whenever the tab returns.
+    const audioContexts = new Set();
+    for (const name of ['AudioContext', 'webkitAudioContext']) {
+        const Native = window[name];
+        if (!Native) continue;
+        window[name] = class extends Native {
+            constructor(...args) { super(...args); audioContexts.add(this); resumeAudio(); }
+        };
+    }
+    function resumeAudio() {
+        for (const context of audioContexts) {
+            if (context.state === 'suspended' || context.state === 'interrupted') context.resume().catch(() => {});
+        }
+    }
+    window.fraglineAudioState = () => Array.from(audioContexts, context => context.state);
+    for (const type of ['pointerdown', 'mousedown', 'keydown', 'touchend', 'click']) {
+        window.addEventListener(type, resumeAudio, {capture: true, passive: true});
+    }
+    window.addEventListener('gamepadconnected', resumeAudio);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeAudio(); });
+
+    // ---------- Saved games ----------
+
+    // Single-player saves are written by the engine into /saves. That folder is mounted from the browser's
+    // IndexedDB (IDBFS), so saves survive reloads; the engine tells us after each save and we copy it out.
+    // Without IndexedDB (some private windows) the saves still work for the current session.
+    let savesReady = null, syncing = false, syncAgain = false;
+    function mountSaves() {
+        savesReady ??= (async () => {
+            try {
+                const {FS} = Module;
+                FS.mkdir('/saves');
+                FS.mount(FS.filesystems.IDBFS, {}, '/saves');
+                await new Promise((resolve, reject) => FS.syncfs(true, error => (error ? reject(error) : resolve())));
+                Module.fraglineSaved = syncSaves;
+            } catch (error) {
+                console.warn('Saved games will not be kept after reload:', error);
+            }
+        })();
+        return savesReady;
+    }
+    window.fraglineSavesIdle = () => !syncing && !syncAgain; // exposed for tests
+    function syncSaves() {
+        if (syncing) { syncAgain = true; return; }
+        syncing = true;
+        Module.FS.syncfs(false, error => {
+            syncing = false;
+            if (error) console.warn('Could not store saved game:', error);
+            if (syncAgain) { syncAgain = false; syncSaves(); }
+        });
+    }
+
     // ---------- Engine ----------
 
     window.Module = {
@@ -265,9 +329,11 @@
     window.fraglineConfigs = engineConfigs; // exposed for tests
 
     function engineArgs(extra) {
-        const args = ['-iwad', 'freedm.wad', '-file', 'fragline.wad', '-window', '-nogui', '-nomusic',
+        const args = ['-iwad', 'freedm.wad', '-file', 'fragline.wad', '-window', '-nogui',
             '-config', 'default.cfg', '-extraconfig', 'extra.cfg', '-servername', 'Fragline', '-pet', playerName()];
+        if (!state.room) args.push('-savedir', '/saves'); // single-player only; the engine disables saving in network games
         if (!setting('set-sound')) args.push('-nosound');
+        else if (!setting('set-music')) args.push('-nomusic'); // no music synth at all: saves its CPU time
         return args.concat(extra);
     }
 
@@ -277,6 +343,7 @@
         if (token !== state.token) return; // the player left the lobby while the engine was still loading
         state.running = true;
         for (const [name, text] of Object.entries(engineConfigs())) Module.FS.writeFile(`/${name}`, text);
+        if (args.includes('-savedir')) await mountSaves();
         document.body.classList.add('playing');
         $('canvas').focus({preventScroll: true});
         callMain(args);
@@ -319,6 +386,9 @@
                 break;
             case 10:
                 if (state.room) matchStarted();
+                break;
+            case 20: // score screen: the game waits for Fire or Use
+                toast('Press Fire or Use to continue.', 6000);
                 break;
             case 12: {
                 const name = /client '(.*)'/.exec(detail)?.[1] || 'A player';

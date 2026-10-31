@@ -3,7 +3,7 @@
 // Usage: node tests/browser.test.cjs [baseURL] [players]
 //   With no baseURL it starts lan_server.py on a free port. Needs Playwright + Chromium.
 const assert = require('node:assert/strict');
-const {spawn} = require('node:child_process');
+const {spawn, spawnSync} = require('node:child_process');
 const net = require('node:net');
 const path = require('node:path');
 const {chromium} = require('playwright');
@@ -117,5 +117,11 @@ async function openPage(browser, url, errors) {
     } finally {
         await browser.close();
         server.stop();
+    }
+    // The Classic engine's own test (audio, controls, weapons, maps, saves, bad input) starts its own
+    // server and browser once this one is closed. It takes a few minutes; SKIP_CLASSIC=1 leaves it out.
+    if (!process.env.SKIP_CLASSIC && !process.argv[2]) {
+        const classic = spawnSync(process.execPath, [path.join(__dirname, 'classic.test.cjs')], {stdio: 'inherit'});
+        assert.equal(classic.status, 0, 'classic engine test');
     }
 })().catch(error => { console.error(error); process.exitCode = 1; });
