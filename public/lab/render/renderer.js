@@ -3,6 +3,8 @@
 //   const r = createRenderer(canvas, wad, map, options);
 //   r.setCamera({x,y,z,angle,pitch,fov}); r.setEntities([...]); r.render(dt, alpha?);
 //
+// Live sector heights: r.setSectorHeights(floors, ceils) (Float32Array/Array in Doom units) may be called every frame; geometry is
+// never rebuilt (vertices follow per-sector height slots that are displaced in the vertex shader).
 // See README-style notes at the bottom of the file for the option list.
 
 import { pointInSector } from '../wad.js';
@@ -48,7 +50,7 @@ const DEFAULTS = {
   fogDensity: 0.00035, fogColor: [0.03, 0.035, 0.06],
   ambient: 0.045, lightGain: 1.0, gamma: 1.0, vignette: 0.25, lodBias: 0,
   things: true, animate: true, sectorEffects: true,
-  sky: null, maxLights: 16, clipZ: 1e9, // clipZ: debug, hides geometry above this height
+  sky: null, noOcclusion: false, maxLights: 16, clipZ: 1e9, // clipZ: debug, hides geometry above this height
   preserveDrawingBuffer: false, syncTiming: false,
 };
 
@@ -116,6 +118,62 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
   const geo = buildGeometry(map, wallReg, flatReg);
   const nsec = map.sectors.length;
 
+  // ---- static tables for the BSP walk, live heights and light visibility
+  const NL = geo.nLines, NSS = geo.nSubsectors;
+  const nodes = map.nodes, segs = map.segs, subs = map.subsectors, mverts = map.vertices, mlines = map.linedefs, msides = map.sidedefs;
+  const haveBsp = nodes.length > 0 && subs.length > 0 && segs.length > 0;
+  const baseF = new Float32Array(nsec), baseC = new Float32Array(nsec), liveF = new Float32Array(nsec), liveC = new Float32Array(nsec);
+  for (let i = 0; i < nsec; i++) { baseF[i] = liveF[i] = map.sectors[i].floor; baseC[i] = liveC[i] = map.sectors[i].ceil; }
+  const slotRows = Math.max(1, Math.ceil(nsec * 2 / 256));
+  const deltaArr = new Float32Array(256 * slotRows);           // live - map height per slot (sector*2 + floor|ceil)
+  const secZLo = new Float32Array(nsec), secZHi = new Float32Array(nsec);
+  let zLo = 0, zHi = 0, deltaDirty = true, zDirty = true;
+  const ldFs = new Int32Array(NL), ldBs = new Int32Array(NL);
+  const ldAx = new Float32Array(NL), ldAy = new Float32Array(NL), ldBx = new Float32Array(NL), ldBy = new Float32Array(NL);
+  mlines.forEach((ld, i) => {
+    ldFs[i] = ld.front >= 0 ? msides[ld.front].sector : -1; ldBs[i] = ld.back >= 0 ? msides[ld.back].sector : -1;
+    const a = mverts[ld.v1], b = mverts[ld.v2];
+    if (a && b) { ldAx[i] = a.x; ldAy[i] = a.y; ldBx[i] = b.x; ldBy[i] = b.y; }
+  });
+  const sgX1 = new Float32Array(segs.length), sgY1 = new Float32Array(segs.length), sgX2 = new Float32Array(segs.length), sgY2 = new Float32Array(segs.length);
+  const sgUnit = new Int32Array(segs.length), sgLd = new Int32Array(segs.length);
+  segs.forEach((sg, i) => {
+    const a = mverts[sg.v1], b = mverts[sg.v2], ld = mlines[sg.linedef];
+    sgLd[i] = sg.linedef; sgUnit[i] = !a || !b || !ld || (sg.side ? ld.back : ld.front) < 0 ? -1 : sg.linedef * 2 + (sg.side ? 1 : 0);
+    if (a && b) { sgX1[i] = a.x; sgY1[i] = a.y; sgX2[i] = b.x; sgY2[i] = b.y; }
+  });
+  // node boxes (minx, miny, maxx, maxy) for the right then the left child. Built bottom-up from the subsector boxes (which include the
+  // floor/ceiling polygons) because the BSP's own bounding boxes only cover segs and would cull polygons that reach beyond them.
+  const nodeBox = new Float32Array(nodes.length * 8);
+  // iterative post-order (child indices are always smaller than their parent in Doom BSPs, but do not rely on it)
+  { const done = new Uint8Array(nodes.length), st = [];
+    for (let root = nodes.length - 1; root >= 0; root--) {
+      if (done[root]) continue;
+      st.push(root);
+      while (st.length) {
+        const c = st[st.length - 1], n = nodes[c];
+        let ready = true;
+        for (const ch of [n.right, n.left]) if (!(ch & 0x8000) && !done[ch]) { st.push(ch); ready = false; }
+        if (!ready) continue;
+        st.pop();
+        if (done[c]) continue;
+        const rb = new Float32Array(4), lb = new Float32Array(4);
+        const get = (ch, o) => { if (ch & 0x8000) { const i = (ch === 0xffff ? 0 : ch & 0x7fff) * 4; for (let k = 0; k < 4; k++) o[k] = geo.ssBox[i + k]; } else { const a = ch * 8; o[0] = Math.min(nodeBox[a], nodeBox[a + 4]); o[1] = Math.min(nodeBox[a + 1], nodeBox[a + 5]); o[2] = Math.max(nodeBox[a + 2], nodeBox[a + 6]); o[3] = Math.max(nodeBox[a + 3], nodeBox[a + 7]); } };
+        get(n.right, rb); get(n.left, lb);
+        nodeBox.set([rb[0] - 1, rb[1] - 1, rb[2] + 1, rb[3] + 1, lb[0] - 1, lb[1] - 1, lb[2] + 1, lb[3] + 1], c * 8);
+        done[c] = 1;
+      }
+    }
+  }
+  // sector adjacency over two-sided lines (light flood)
+  const adjStart = new Int32Array(nsec + 1);
+  for (let i = 0; i < NL; i++) if (ldFs[i] >= 0 && ldBs[i] >= 0 && ldFs[i] !== ldBs[i]) { adjStart[ldFs[i] + 1]++; adjStart[ldBs[i] + 1]++; }
+  for (let i = 0; i < nsec; i++) adjStart[i + 1] += adjStart[i];
+  const adjNb = new Int32Array(adjStart[nsec]), adjLd = new Int32Array(adjStart[nsec]), adjFill = adjStart.slice(0, nsec);
+  for (let i = 0; i < NL; i++) if (ldFs[i] >= 0 && ldBs[i] >= 0 && ldFs[i] !== ldBs[i]) {
+    adjNb[adjFill[ldFs[i]]] = ldBs[i]; adjLd[adjFill[ldFs[i]]++] = i; adjNb[adjFill[ldBs[i]]] = ldFs[i]; adjLd[adjFill[ldBs[i]]++] = i;
+  }
+
   // --- texture arrays (nearest, manual mip selection in the shader via texelFetch)
   function makeTexArray(unit, items, S) {
     const n = Math.max(1, items.length);
@@ -148,7 +206,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
   const wallS = Math.max(16, pow2ceil(Math.max(1, ...wallReg.entries.map((e) => Math.max(e.w, e.h)))));
   const maxLayers = gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS);
   if (wallItems.length > maxLayers) console.warn('too many wall textures for this GPU', wallItems.length);
-  const U_WALL = 0, U_FLAT = 1, U_WINFO = 2, U_FINFO = 3, U_SECL = 4, U_SKY = 5, U_ATLAS = 6, U_SCENE = 7, U_BLOOM = 8, U_LUT = 9;
+  const U_WALL = 0, U_FLAT = 1, U_WINFO = 2, U_FINFO = 3, U_SECL = 4, U_SKY = 5, U_ATLAS = 6, U_SCENE = 7, U_BLOOM = 8, U_LUT = 9, U_DELTA = 10;
   const wallTex = makeTexArray(U_WALL, wallItems, wallS);
   const flatTex = makeTexArray(U_FLAT, flatItems, 64);
 
@@ -182,11 +240,19 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
 
   // --- sector light texture
   const secRows = Math.max(1, Math.ceil(nsec / 256));
-  const secLight = new Float32Array(256 * secRows);
+  const secLight = new Float32Array(256 * secRows * 2);   // per sector: R = light level, G = bitmask of dynamic lights that can reach it
+  const secMask = new Int32Array(nsec);
   const secLightTex = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0 + U_SECL);
   gl.bindTexture(gl.TEXTURE_2D, secLightTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, 256, secRows, 0, gl.RED, gl.FLOAT, secLight);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, 256, secRows, 0, gl.RG, gl.FLOAT, secLight);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  // live height deltas (R32F, 256 slots per row)
+  const deltaTex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0 + U_DELTA);
+  gl.bindTexture(gl.TEXTURE_2D, deltaTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, 256, slotRows, 0, gl.RED, gl.FLOAT, deltaArr);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
@@ -205,7 +271,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
   }
   const hash = (n) => { n = (n ^ 61) ^ (n >>> 16); n = Math.imul(n + (n << 3), 0x27d4eb2d); n ^= n >>> 15; return (n >>> 0) / 4294967296; };
   function updateSectorLight(time) {
-    for (let i = 0; i < nsec; i++) secLight[i] = map.sectors[i].light;
+    for (let i = 0; i < nsec; i++) secLight[i * 2] = map.sectors[i].light;
     if (opt.sectorEffects) {
       const tic = Math.floor(time * 35);
       for (const e of effects) {
@@ -218,12 +284,15 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
           case 8: { const span = Math.max(8, hi - lo), per = (span / 8) * 2, ph = (tic % per) / per; v = lo + span * (1 - Math.abs(ph * 2 - 1)); v = Math.min(hi, v); break; }
           case 17: v = Math.max(lo, hi - Math.floor(hash(Math.floor(tic / 4) * 131 + e.s) * 4) * 16); break;
         }
-        secLight[e.s] = v;
+        secLight[e.s * 2] = v;
       }
     }
+  }
+  function uploadSectorLight() {
+    for (let i = 0; i < nsec; i++) secLight[i * 2 + 1] = secMask[i];
     gl.activeTexture(gl.TEXTURE0 + U_SECL);
     gl.bindTexture(gl.TEXTURE_2D, secLightTex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, secRows, gl.RED, gl.FLOAT, secLight);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, secRows, gl.RG, gl.FLOAT, secLight);
   }
 
   // --- sky
@@ -288,7 +357,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
       if (sec < 0) continue;
       const name = def[0] + def[1] + '0';
       if (!getSprite(name)) continue;
-      staticThings.push({ x: t.x, y: t.y, z: map.sectors[sec].floor, sec, name, fb: def[2] ? 1 : 0 });
+      staticThings.push({ x: t.x, y: t.y, z: map.sectors[sec].floor, sec, name, fb: def[2] ? 1 : 0, spr: getSprite(name) });
     }
   }
 
@@ -314,21 +383,26 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
     gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, STRIDE, 20);
     gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, STRIDE, 24);
     gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 1, gl.FLOAT, false, STRIDE, 28);
+    gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5, 1, gl.FLOAT, false, STRIDE, 32);
+    gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6, 1, gl.FLOAT, false, STRIDE, 36);
+    gl.enableVertexAttribArray(7); gl.vertexAttribPointer(7, 1, gl.FLOAT, false, STRIDE, 40);
+    gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 1, gl.FLOAT, false, STRIDE, 44);
     const ibo = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, Math.max(4, data.indices.byteLength), gl.DYNAMIC_DRAW);
     gl.bindVertexArray(null);
     return { data, prog, kind, vao, vbo, ibo, frame: new Uint32Array(Math.max(1, data.indices.length)), count: 0 };
   }
+  // opaque first (front-to-back lists + depth test = early-z), alpha-tested mid textures after, sky last
   const batches = [
     makeBatch(geo.batches.wall, progGeo, 'wall'),
-    makeBatch(geo.batches.masked, progMasked, 'masked'),
     makeBatch(geo.batches.flat, progGeo, 'flat'),
+    makeBatch(geo.batches.masked, progMasked, 'masked'),
     makeBatch(geo.batches.sky, progSky, 'sky'),
   ];
 
   // sprites: dynamic vertex buffer (pos3, uv2, light, fb) + static quad index buffer
-  const SPR_FLOATS = 7, MAX_SPRITES = 4096;
+  const SPR_FLOATS = 8, MAX_SPRITES = 4096;
   let sprData = new Float32Array(MAX_SPRITES * 4 * SPR_FLOATS);
   const sprVao = gl.createVertexArray();
   gl.bindVertexArray(sprVao);
@@ -339,6 +413,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
   gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, SPR_FLOATS * 4, 12);
   gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, SPR_FLOATS * 4, 20);
   gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, SPR_FLOATS * 4, 24);
+  gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 1, gl.FLOAT, false, SPR_FLOATS * 4, 28);
   const sprIbo = gl.createBuffer();
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, sprIbo);
   {
@@ -414,48 +489,98 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
   }
   if (opt.classic) ensureLut();
 
-  // ---------------------------------------------------------------- camera / entities / lights state
-  let camPrev = null;
-  let camCur = { x: 0, y: 0, z: 41, angle: 0, pitch: 0, fov: opt.fov };
+  // ---------------------------------------------------------------- camera / entities / lights state (nothing here allocates per frame)
+  const camA = { x: 0, y: 0, z: 41, angle: 0, pitch: 0, fov: opt.fov }, camB = { x: 0, y: 0, z: 41, angle: 0, pitch: 0, fov: opt.fov }, camI = { x: 0, y: 0, z: 41, angle: 0, pitch: 0, fov: opt.fov };
+  let camPrev = camA, camCur = camB;
   function setCamera(c) {
-    camPrev = camCur;
-    camCur = { x: c.x ?? camCur.x, y: c.y ?? camCur.y, z: c.z ?? camCur.z, angle: c.angle ?? camCur.angle, pitch: c.pitch ?? camCur.pitch, fov: c.fov ?? camCur.fov };
-    if (c.teleport) camPrev = camCur;
+    const older = camPrev, prev = camCur;
+    older.x = c.x ?? prev.x; older.y = c.y ?? prev.y; older.z = c.z ?? prev.z; older.angle = c.angle ?? prev.angle; older.pitch = c.pitch ?? prev.pitch; older.fov = c.fov ?? prev.fov;
+    camPrev = prev; camCur = older;
+    if (c.teleport) { prev.x = older.x; prev.y = older.y; prev.z = older.z; prev.angle = older.angle; prev.pitch = older.pitch; prev.fov = older.fov; }
   }
-  let entPrev = new Map(), entCur = [];
+  const entPrev = new Map();
+  let entCur = [];
   function setEntities(list) {
-    entPrev = new Map();
-    entCur.forEach((e, i) => entPrev.set(e.id ?? i, e));
+    entPrev.clear();
+    for (let i = 0; i < entCur.length; i++) entPrev.set(entCur[i].id ?? i, entCur[i]);
     entCur = list || [];
   }
-  const lights = new Map();
+  const lightArr = [], lightById = new Map();
   let lightSeq = 1;
   function addLight(l) {
     const id = lightSeq++;
-    lights.set(id, {
-      x: l.x, y: l.y, z: l.z ?? 40, radius: l.radius ?? 200, color: parseColor(l.color), intensity: l.intensity ?? 1,
-      ttl: l.ttl ?? null, age: 0,
-    });
+    const o = { id, x: l.x, y: l.y, z: l.z ?? 40, radius: l.radius ?? 200, color: parseColor(l.color), intensity: l.intensity ?? 1, ttl: l.ttl ?? null, age: 0 };
+    lightArr.push(o); lightById.set(id, o);
     return id;
   }
-  function removeLight(id) { lights.delete(id); }
+  function removeLight(id) {
+    const o = lightById.get(id);
+    if (!o) return;
+    lightById.delete(id);
+    const i = lightArr.indexOf(o);
+    if (i >= 0) { lightArr[i] = lightArr[lightArr.length - 1]; lightArr.pop(); }
+  }
   function updateLight(id, patch) {
-    const l = lights.get(id);
+    const l = lightById.get(id);
     if (!l) return;
     if (patch.color !== undefined) l.color = parseColor(patch.color);
     for (const k of ['x', 'y', 'z', 'radius', 'intensity']) if (patch[k] !== undefined) l[k] = patch[k];
   }
 
+  // ---------------------------------------------------------------- live sector heights
+  function setSectorHeights(floors, ceils) {
+    const n = Math.min(nsec, floors ? floors.length : 0);
+    for (let s = 0; s < n; s++) {
+      const f = floors[s], c = ceils[s];
+      if (f !== liveF[s]) { liveF[s] = f; deltaArr[s * 2] = f - baseF[s]; deltaDirty = zDirty = true; }
+      if (c !== liveC[s]) { liveC[s] = c; deltaArr[s * 2 + 1] = c - baseC[s]; deltaDirty = zDirty = true; }
+    }
+  }
+  function uploadDeltas() {
+    deltaDirty = false;
+    gl.activeTexture(gl.TEXTURE0 + U_DELTA);
+    gl.bindTexture(gl.TEXTURE_2D, deltaTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, slotRows, gl.RED, gl.FLOAT, deltaArr);
+  }
+  // live z extent of each sector's geometry = base extent shifted by the delta of the slot each vertex follows
+  function recomputeZ() {
+    zDirty = false;
+    let glo = 1e9, ghi = -1e9;
+    const zs = geo.zStart, zd = geo.zData;
+    for (let s = 0; s < nsec; s++) {
+      let lo = 1e9, hi = -1e9;
+      for (let e = zs[s]; e < zs[s + 1]; e++) {
+        const b = zd[e * 3], d = b >= 0 ? deltaArr[b] : 0;
+        if (zd[e * 3 + 1] + d < lo) lo = zd[e * 3 + 1] + d;
+        if (zd[e * 3 + 2] + d > hi) hi = zd[e * 3 + 2] + d;
+      }
+      if (lo > hi) { lo = 0; hi = 0; }
+      secZLo[s] = lo - 1; secZHi[s] = hi + 1;
+      if (lo < glo) glo = lo; if (hi > ghi) ghi = hi;
+    }
+    zLo = glo - 1; zHi = ghi + 1;
+  }
+  recomputeZ();
+
   // ---------------------------------------------------------------- per-frame scratch
   const P = new Float32Array(16), V = new Float32Array(16), VP = new Float32Array(16);
   const planes = new Float32Array(24);
-  const visible = new Uint8Array(nsec);
   const lpArr = new Float32Array(16 * 4), lcArr = new Float32Array(16 * 4);
+  const selLight = new Array(16).fill(null), selScore = new Float32Array(16);
   let nLights = 0;
   let curAnimTic = -1, time = 0;
-  const stat = { drawCalls: 0, triangles: 0, cpuMs: 0, gpuMs: null, visibleSectors: 0, sprites: 0, syncMs: null, renderSize: [0, 0] };
-  const pendingQueries = [];
-  let lastGpuMs = null;
+  const stat = { drawCalls: 0, triangles: 0, cpuMs: 0, gpuMs: null, visibleSectors: 0, visibleSubsectors: 0, sprites: 0, syncMs: null, renderSize: [0, 0] };
+  const QN = 4, qPool = [], qBusy = new Uint8Array(QN);
+  if (timerExt) for (let i = 0; i < QN; i++) qPool.push(gl.createQuery());
+  let lastGpuMs = null, qHead = 0, qTail = 0, qCount = 0, qActive = -1;
+
+  // camera frame used by the BSP walk / sprite code
+  let camX = 0, camY = 0, fwdX = 1, fwdY = 0, rgtX = 0, rgtY = -1, colMid = 0, colScale = 0, occlOn = false;
+  const COLS = 512, NEAR = 0.5;
+  const cover = new Uint32Array(COLS >> 5);
+  const order = new Int32Array(geo.nUnits + 1), stamp = new Int32Array(geo.nUnits + 1), secSeen = new Int32Array(nsec);
+  let orderN = 0, stampN = 0, allCovered = false, ssVisited = 0;
+  const stackC = new Int32Array(2048), stackB = new Int32Array(2048);
 
   function buildMatrices(cam, aspect) {
     const a = cam.angle, p = cam.pitch;
@@ -478,85 +603,173 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
       for (let k = 0; k < 4; k++) s += P[k * 4 + r] * V[c * 4 + k];
       VP[c * 4 + r] = s;
     }
-    const m = VP;
-    const row = (i) => [m[i], m[4 + i], m[8 + i], m[12 + i]];
-    const r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
-    const pl = [
-      [r3[0] + r0[0], r3[1] + r0[1], r3[2] + r0[2], r3[3] + r0[3]], [r3[0] - r0[0], r3[1] - r0[1], r3[2] - r0[2], r3[3] - r0[3]],
-      [r3[0] + r1[0], r3[1] + r1[1], r3[2] + r1[2], r3[3] + r1[3]], [r3[0] - r1[0], r3[1] - r1[1], r3[2] - r1[2], r3[3] - r1[3]],
-      [r3[0] + r2[0], r3[1] + r2[1], r3[2] + r2[2], r3[3] + r2[3]], [r3[0] - r2[0], r3[1] - r2[1], r3[2] - r2[2], r3[3] - r2[3]],
-    ];
-    pl.forEach((q, i) => planes.set(q, i * 4));
-    return { rx, ry, fx, fy };
+    // frustum planes r3 +/- r_i (left, right, bottom, top, near, far)
+    for (let i = 0; i < 3; i++) for (let k = 0; k < 4; k++) {
+      planes[(2 * i) * 4 + k] = VP[k * 4 + 3] + VP[k * 4 + i];
+      planes[(2 * i + 1) * 4 + k] = VP[k * 4 + 3] - VP[k * 4 + i];
+    }
+    camX = cam.x; camY = cam.y; fwdX = Math.cos(a); fwdY = Math.sin(a); rgtX = rx; rgtY = ry;
+    // Azimuth -> column mapping used for 1-D occlusion. T is the widest horizontal tangent of the (pitched) frustum, so every
+    // visible ray maps inside [0, COLS); when looking so steeply that the frustum reaches the zenith the occluder is switched off.
+    const den = cp - tanV * Math.abs(sp);
+    occlOn = den > 0.08 && !opt.noOcclusion;
+    if (occlOn) { colMid = COLS * 0.5; colScale = COLS * 0.5 * den / (tanV * aspect); }
   }
 
-  function cullSectors() {
-    const bb = geo.bbox;
-    let nv = 0;
-    for (let s = 0; s < nsec; s++) {
-      const o = s * 6;
-      let vis = 1;
-      for (let i = 0; i < 6; i++) {
-        const a = planes[i * 4], b = planes[i * 4 + 1], c = planes[i * 4 + 2], d = planes[i * 4 + 3];
-        const px = a > 0 ? bb[o + 3] : bb[o], py = b > 0 ? bb[o + 4] : bb[o + 1], pz = c > 0 ? bb[o + 5] : bb[o + 2];
-        if (a * px + b * py + c * pz + d < 0) { vis = 0; break; }
-      }
-      visible[s] = vis; nv += vis;
+  // ---- 1-D column coverage (Doom's solidsegs, as a bitset)
+  function rangeCovered(a, b) {
+    for (let w = a >> 5, we = b >> 5; w <= we; w++) {
+      let m = 0xffffffff;
+      if (w === (a >> 5)) m = (m << (a & 31)) >>> 0;
+      if (w === we) m = (m & (0xffffffff >>> (31 - (b & 31)))) >>> 0;
+      if (((cover[w] & m) >>> 0) !== m) return false;
     }
-    return nv;
+    return true;
+  }
+  function markCovered(a, b) {
+    for (let w = a >> 5, we = b >> 5; w <= we; w++) {
+      let m = 0xffffffff;
+      if (w === (a >> 5)) m = (m << (a & 31)) >>> 0;
+      if (w === we) m = (m & (0xffffffff >>> (31 - (b & 31)))) >>> 0;
+      cover[w] = (cover[w] | m) >>> 0;
+    }
+    allCovered = true;
+    for (let w = 0; w < cover.length; w++) if (cover[w] !== 0xffffffff) { allCovered = false; break; }
+  }
+  let spLo = 0, spHi = 0;
+  // column span of a wall segment; false when it is behind the camera
+  function segSpan(x1, y1, x2, y2) {
+    let f1 = (x1 - camX) * fwdX + (y1 - camY) * fwdY, r1 = (x1 - camX) * rgtX + (y1 - camY) * rgtY;
+    let f2 = (x2 - camX) * fwdX + (y2 - camY) * fwdY, r2 = (x2 - camX) * rgtX + (y2 - camY) * rgtY;
+    if (f1 < NEAR && f2 < NEAR) return false;
+    if (f1 < NEAR) { const t = (NEAR - f1) / (f2 - f1); r1 += (r2 - r1) * t; f1 = NEAR; }
+    else if (f2 < NEAR) { const t = (NEAR - f2) / (f1 - f2); r2 += (r1 - r2) * t; f2 = NEAR; }
+    const c1 = colMid + colScale * r1 / f1, c2 = colMid + colScale * r2 / f2;
+    if (c1 < c2) { spLo = c1; spHi = c2; } else { spLo = c2; spHi = c1; }
+    return spHi >= 0 && spLo <= COLS;
+  }
+  function frustumBox(x0, y0, x1, y1, z0, z1) {
+    for (let i = 0; i < 6; i++) {
+      const a = planes[i * 4], b = planes[i * 4 + 1], c = planes[i * 4 + 2], d = planes[i * 4 + 3];
+      if (a * (a > 0 ? x1 : x0) + b * (b > 0 ? y1 : y0) + c * (c > 0 ? z1 : z0) + d < 0) return false;
+    }
+    return true;
+  }
+  let cLo = 0, cHi = 0, cBehind = 0;
+  function corner(x, y) {
+    const f = (x - camX) * fwdX + (y - camY) * fwdY;
+    if (f < NEAR) { cBehind++; return; }
+    const c = colMid + colScale * ((x - camX) * rgtX + (y - camY) * rgtY) / f;
+    if (c < cLo) cLo = c; if (c > cHi) cHi = c;
+  }
+  // can any part of this xy box (z range z0..z1) be visible?
+  function boxVisible(x0, y0, x1, y1, z0, z1) {
+    if (!frustumBox(x0, y0, x1, y1, z0, z1)) return false;
+    if (!occlOn || (camX >= x0 && camX <= x1 && camY >= y0 && camY <= y1)) return true;
+    cLo = 1e9; cHi = -1e9; cBehind = 0;
+    corner(x0, y0); corner(x1, y0); corner(x1, y1); corner(x0, y1);
+    if (cBehind === 4) return false;
+    if (cBehind > 0) return true;
+    const a = Math.max(0, Math.floor(cLo)), b = Math.min(COLS - 1, Math.floor(cHi));
+    return a > b || !rangeCovered(a, b);
+  }
+  function visitSubsector(ss) {
+    const s = geo.ssSector[ss];
+    if (s < 0) return;
+    const o = ss * 4, sb = geo.ssBox;
+    if (!frustumBox(sb[o], sb[o + 1], sb[o + 2], sb[o + 3], secZLo[s], secZHi[s])) return;
+    ssVisited++; secSeen[s] = stampN;
+    order[orderN++] = NL * 2 + ss;                                     // its floor + ceiling polygons
+    const sub = subs[ss];
+    for (let k = 0; k < sub.count; k++) {
+      const sg = sub.first + k, unit = sgUnit[sg];
+      if (unit < 0) continue;
+      const x1 = sgX1[sg], y1 = sgY1[sg], x2 = sgX2[sg], y2 = sgY2[sg];
+      if ((x2 - x1) * (camY - y1) - (y2 - y1) * (camX - x1) >= 0) continue;   // back-facing (front side is on the right of v1->v2)
+      let hidden = false;
+      if (occlOn) {
+        if (!segSpan(x1, y1, x2, y2)) continue;
+        const a = Math.max(0, Math.floor(spLo)), b = Math.min(COLS - 1, Math.floor(spHi));
+        if (a > b || rangeCovered(a, b)) continue;
+      }
+      if (stamp[unit] !== stampN) { stamp[unit] = stampN; order[orderN++] = unit; }
+      if (occlOn && !hidden) {
+        const li = sgLd[sg], fs = ldFs[li], bs = ldBs[li];
+        if (bs < 0 || fs < 0 || Math.min(liveC[fs], liveC[bs]) <= Math.max(liveF[fs], liveF[bs])) {   // one-sided wall or closed door/lift: solid
+          const a = Math.max(0, Math.ceil(spLo)), b = Math.min(COLS - 1, Math.ceil(spHi) - 1);
+          if (a <= b) markCovered(a, b);
+        }
+      }
+    }
+  }
+  // front-to-back BSP walk: fills `order` with draw units (subsector flats + visible linedef sides)
+  function bspWalk() {
+    orderN = 0; ssVisited = 0; stampN++;
+    cover.fill(0); allCovered = false;
+    if (!haveBsp) { for (let u = 0; u < geo.nUnits; u++) order[orderN++] = u; for (let s = 0; s < nsec; s++) secSeen[s] = stampN; return; }
+    let sp = 0;
+    stackC[0] = nodes.length ? nodes.length - 1 : 0x8000; stackB[0] = -1; sp = 1;
+    while (sp > 0 && !allCovered) {
+      const c = stackC[--sp], b = stackB[sp];
+      if (b >= 0) { const o = b * 4; if (!boxVisible(nodeBox[o], nodeBox[o + 1], nodeBox[o + 2], nodeBox[o + 3], zLo, zHi)) continue; }
+      if (c & 0x8000) { visitSubsector(c === 0xffff ? 0 : c & 0x7fff); continue; }
+      const nd = nodes[c];
+      const side = (nd.dx * (camY - nd.y) - nd.dy * (camX - nd.x)) < 0 ? 0 : 1;   // 0: camera is on the right child's side
+      stackC[sp] = side ? nd.right : nd.left; stackB[sp++] = c * 2 + (side ? 0 : 1);   // far side first ...
+      stackC[sp] = side ? nd.left : nd.right; stackB[sp++] = c * 2 + (side ? 1 : 0);   // ... so the near side is popped (and clipped against) first
+    }
+    let seen = 0; for (let s = 0; s < nsec; s++) if (secSeen[s] === stampN) seen++;
+    stat.visibleSectors = seen;
   }
 
   function buildIndexLists() {
     let tris = 0;
-    for (const b of batches) {
-      const src = b.data.indices, ranges = b.data.ranges, dst = b.frame;
-      let n = 0, runStart = -1, runEnd = -1;
-      for (let s = 0; s < nsec; s++) {
-        const st = ranges[s * 2], ct = ranges[s * 2 + 1];
-        if (!visible[s] || ct === 0) {
-          if (runStart >= 0) { dst.set(src.subarray(runStart, runEnd), n); n += runEnd - runStart; runStart = -1; }
-          continue;
-        }
-        if (runStart >= 0 && st === runEnd) runEnd = st + ct;
-        else {
-          if (runStart >= 0) { dst.set(src.subarray(runStart, runEnd), n); n += runEnd - runStart; }
-          runStart = st; runEnd = st + ct;
-        }
+    for (let bi = 0; bi < batches.length; bi++) {
+      const b = batches[bi], src = b.data.indices, ranges = b.data.ranges, dst = b.frame;
+      let n = 0;
+      for (let o = 0; o < orderN; o++) {
+        const u = order[o], st = ranges[u * 2], ct = ranges[u * 2 + 1];
+        for (let k = 0; k < ct; k++) dst[n + k] = src[st + k];
+        n += ct;
       }
-      if (runStart >= 0) { dst.set(src.subarray(runStart, runEnd), n); n += runEnd - runStart; }
       b.count = n;
-      gl.bindVertexArray(b.vao);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b.ibo);
-      if (n) gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, dst, 0, n);
+      if (n) {
+        gl.bindVertexArray(b.vao);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b.ibo);
+        gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, dst, 0, n);
+      }
       tris += n / 3;
     }
     return tris;
   }
 
-  // sprites -> sprData; returns count
-  function buildSprites(cam, basis, alpha) {
-    let n = 0;
-    const { rx, ry } = basis;
-    const push = (spr, x, y, z, light, fb) => {
-      if (n >= MAX_SPRITES) return;
-      // cheap view cull: behind camera
-      const dx = x - cam.x, dy = y - cam.y;
-      const depth = dx * basis.fx + dy * basis.fy;
-      if (depth < -spr.w || depth > 6000) return;
-      const l = -spr.left, r = spr.w - spr.left;
-      const zt = z + spr.top, zb = zt - spr.h;
-      const o = n * 4 * SPR_FLOATS;
-      const d = sprData;
-      const put = (k, px, py, pz, u, v) => { const q = o + k * SPR_FLOATS; d[q] = px; d[q + 1] = py; d[q + 2] = pz; d[q + 3] = u; d[q + 4] = v; d[q + 5] = light; d[q + 6] = fb; };
-      put(0, x + rx * l, y + ry * l, zb, spr.u0, spr.v1);
-      put(1, x + rx * r, y + ry * r, zb, spr.u1, spr.v1);
-      put(2, x + rx * r, y + ry * r, zt, spr.u1, spr.v0);
-      put(3, x + rx * l, y + ry * l, zt, spr.u0, spr.v0);
-      n++;
-    };
-    for (const t of staticThings) {
-      const spr = getSprite(t.name);
-      if (spr) push(spr, t.x, t.y, t.z, secLight[t.sec], t.fb);
+  // ---- sprites -> sprData
+  let sprN = 0;
+  function pushSprite(spr, x, y, z, light, fb, mask) {
+    if (sprN >= MAX_SPRITES) return;
+    const dx = x - camX, dy = y - camY, depth = dx * fwdX + dy * fwdY;
+    if (depth < -spr.w || depth > 6000) return;                          // behind the camera / too far
+    const l = -spr.left, r = spr.w - spr.left, zt = z + spr.top, zb = zt - spr.h;
+    const d = sprData, o = sprN * 4 * SPR_FLOATS;
+    for (let k = 0; k < 4; k++) {
+      const q = o + k * SPR_FLOATS, side = (k === 0 || k === 3) ? l : r, top = k >= 2;
+      d[q] = x + rgtX * side; d[q + 1] = y + rgtY * side; d[q + 2] = top ? zt : zb;
+      d[q + 3] = (k === 0 || k === 3) ? spr.u0 : spr.u1; d[q + 4] = top ? spr.v0 : spr.v1; d[q + 5] = light; d[q + 6] = fb; d[q + 7] = mask;
+    }
+    sprN++;
+  }
+  const rotNames = new Map();
+  function rotatedName(name, rot) {
+    let arr = rotNames.get(name);
+    if (!arr) { arr = []; for (let i = 0; i < 8; i++) arr.push(name.slice(0, 5) + (i + 1)); rotNames.set(name, arr); }
+    return arr[rot];
+  }
+  function buildSprites(cam, alpha) {
+    sprN = 0;
+    for (let i = 0; i < staticThings.length; i++) {
+      const t = staticThings[i];
+      if (haveBsp && secSeen[t.sec] !== stampN) continue;
+      pushSprite(t.spr, t.x, t.y, t.z, secLight[t.sec * 2], t.fb, secMask[t.sec]);
     }
     for (let i = 0; i < entCur.length; i++) {
       const e = entCur[i];
@@ -567,19 +780,19 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
       }
       let name = e.sprite;
       if (!name) continue;
-      if (name.length >= 6 && (name[5] === '1' || name[5] === '0') && e.rotate !== false && e.angle !== undefined && name[5] === '1') {
+      if (name.length >= 6 && e.rotate !== false && e.angle !== undefined && name.charCodeAt(5) === 49) {
         const toThing = Math.atan2(y - cam.y, x - cam.x);
         let rot = Math.floor((toThing - ang + Math.PI * 9 / 8) / (Math.PI / 4));
         rot = ((rot % 8) + 8) % 8;
-        const rn = name.slice(0, 5) + (rot + 1);
+        const rn = rotatedName(name, rot);
         if (getSprite(rn)) name = rn;
       }
       const spr = getSprite(name);
       if (!spr) continue;
       const sec = pointInSector(map, x, y);
-      push(spr, x, y, z, sec >= 0 ? secLight[sec] : 160, e.fullbright ? 1 : 0);
+      pushSprite(spr, x, y, z, sec >= 0 ? secLight[sec * 2] : 160, e.fullbright ? 1 : 0, sec >= 0 ? secMask[sec] : 0);
     }
-    return n;
+    return sprN;
   }
 
   function setLightUniforms(prog, cam) {
@@ -596,29 +809,64 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
   }
 
   function collectLights(dt, cam) {
-    const list = [];
-    for (const [id, l] of lights) {
-      if (l.ttl !== null) { l.age += dt; if (l.age >= l.ttl) { lights.delete(id); continue; } }
-      const fade = l.ttl !== null ? 1 - l.age / l.ttl : 1;
-      const d = Math.hypot(l.x - cam.x, l.y - cam.y);
-      list.push({ l, fade, d: d - l.radius });
+    const K = Math.min(16, opt.maxLights);
+    let n = 0;
+    for (let i = 0; i < lightArr.length; i++) {
+      const l = lightArr[i];
+      if (l.ttl !== null) {
+        l.age += dt;
+        if (l.age >= l.ttl) { lightById.delete(l.id); lightArr[i] = lightArr[lightArr.length - 1]; lightArr.pop(); i--; continue; }
+      }
+      const score = Math.hypot(l.x - cam.x, l.y - cam.y) - l.radius;
+      if (n < K || score < selScore[n - 1]) {
+        let j = n < K ? n++ : K - 1;
+        while (j > 0 && selScore[j - 1] > score) { selScore[j] = selScore[j - 1]; selLight[j] = selLight[j - 1]; j--; }
+        selScore[j] = score; selLight[j] = l;
+      }
     }
-    list.sort((a, b) => a.d - b.d);
-    nLights = Math.min(list.length, Math.min(16, opt.maxLights));
-    for (let i = 0; i < nLights; i++) {
-      const { l, fade } = list[i];
+    nLights = n;
+    for (let i = 0; i < n; i++) {
+      const l = selLight[i], fade = l.ttl !== null ? 1 - l.age / l.ttl : 1, k = l.intensity * fade;
       lpArr[i * 4] = l.x; lpArr[i * 4 + 1] = l.y; lpArr[i * 4 + 2] = l.z; lpArr[i * 4 + 3] = l.radius;
-      lcArr[i * 4] = l.color[0] * l.intensity * fade; lcArr[i * 4 + 1] = l.color[1] * l.intensity * fade; lcArr[i * 4 + 2] = l.color[2] * l.intensity * fade;
+      lcArr[i * 4] = l.color[0] * k; lcArr[i * 4 + 1] = l.color[1] * k; lcArr[i * 4 + 2] = l.color[2] * k;
+    }
+  }
+  // Which sectors can each light reach? Flood from the light's sector across portals that are open (live heights) and within its radius,
+  // so light never bleeds through solid walls or closed doors. Result: per-sector bitmask (bit i = light slot i).
+  const bfsQ = new Int32Array(nsec + 1), bfsStamp = new Int32Array(nsec);
+  let bfsN = 0;
+  function computeLightMasks() {
+    secMask.fill(0);
+    for (let i = 0; i < nLights; i++) {
+      const l = selLight[i], bit = 1 << i, st = ++bfsN, r2 = l.radius * l.radius;
+      const s0 = pointInSector(map, l.x, l.y);
+      if (s0 < 0) { for (let s = 0; s < nsec; s++) secMask[s] |= bit; continue; }
+      let qh = 0, qt = 0;
+      bfsQ[qt++] = s0; bfsStamp[s0] = st; secMask[s0] |= bit;
+      while (qh < qt) {
+        const s = bfsQ[qh++];
+        for (let k = adjStart[s], ke = adjStart[s + 1]; k < ke; k++) {
+          const nb = adjNb[k];
+          if (bfsStamp[nb] === st) continue;
+          if (Math.min(liveC[s], liveC[nb]) <= Math.max(liveF[s], liveF[nb])) continue;   // closed door / no opening
+          const li = adjLd[k], ax = ldAx[li], ay = ldAy[li], dx = ldBx[li] - ax, dy = ldBy[li] - ay;
+          const len2 = dx * dx + dy * dy;
+          let t = len2 > 0 ? ((l.x - ax) * dx + (l.y - ay) * dy) / len2 : 0;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const ex = ax + dx * t - l.x, ey = ay + dy * t - l.y;
+          if (ex * ex + ey * ey >= r2) continue;
+          bfsStamp[nb] = st; secMask[nb] |= bit; bfsQ[qt++] = nb;
+        }
+      }
     }
   }
 
   function pollQueries() {
-    while (pendingQueries.length) {
-      const q = pendingQueries[0];
+    while (qCount > 0) {
+      const i = qHead, q = qPool[i];
       if (!gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) break;
       if (!gl.getParameter(timerExt.GPU_DISJOINT_EXT)) lastGpuMs = gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6;
-      gl.deleteQuery(q);
-      pendingQueries.shift();
+      qBusy[i] = 0; qHead = (qHead + 1) % QN; qCount--;
     }
   }
 
@@ -631,26 +879,30 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
 
     // interpolated camera
     let cam = camCur;
-    if (alpha !== undefined && alpha < 1 && camPrev) {
-      cam = {
-        x: lerp(camPrev.x, camCur.x, alpha), y: lerp(camPrev.y, camCur.y, alpha), z: lerp(camPrev.z, camCur.z, alpha),
-        angle: lerpAngle(camPrev.angle, camCur.angle, alpha), pitch: lerp(camPrev.pitch, camCur.pitch, alpha), fov: lerp(camPrev.fov, camCur.fov, alpha),
-      };
+    if (alpha !== undefined && alpha < 1) {
+      camI.x = lerp(camPrev.x, camCur.x, alpha); camI.y = lerp(camPrev.y, camCur.y, alpha); camI.z = lerp(camPrev.z, camCur.z, alpha);
+      camI.angle = lerpAngle(camPrev.angle, camCur.angle, alpha); camI.pitch = lerp(camPrev.pitch, camCur.pitch, alpha); camI.fov = lerp(camPrev.fov, camCur.fov, alpha);
+      cam = camI;
     }
 
     if (opt.animate) {
       const tic = Math.floor(time * 35 / 8);
       if (tic !== curAnimTic) { curAnimTic = tic; setAnimFrame(wallInfo, tic); setAnimFrame(flatInfo, tic); }
     }
+    if (deltaDirty) uploadDeltas();
+    if (zDirty) recomputeZ();
     updateSectorLight(time);
     collectLights(dt, cam);
+    computeLightMasks();
+    uploadSectorLight();
 
-    const basis = buildMatrices(cam, rt.w / rt.h);
-    stat.visibleSectors = cullSectors();
+    buildMatrices(cam, rt.w / rt.h);
+    bspWalk();
+    stat.visibleSubsectors = ssVisited;
     let tris = buildIndexLists();
 
-    let q = null;
-    if (timerExt) { pollQueries(); if (pendingQueries.length < 4) { q = gl.createQuery(); gl.beginQuery(timerExt.TIME_ELAPSED_EXT, q); } }
+    let qi = -1;
+    if (timerExt) { pollQueries(); if (qCount < QN) { qi = (qHead + qCount) % QN; gl.beginQuery(timerExt.TIME_ELAPSED_EXT, qPool[qi]); } }
 
     // ---- scene pass
     gl.bindFramebuffer(gl.FRAMEBUFFER, rt.sceneFbo);
@@ -660,11 +912,13 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.bindSampler(U_SCENE, null);
     let calls = 0;
-    for (const b of batches) {
+    for (let bi = 0; bi < batches.length; bi++) {
+      const b = batches[bi];
       if (!b.count) continue;
       const pr = b.prog;
       gl.useProgram(pr.p);
       gl.uniformMatrix4fv(pr.u.uVP, false, VP);
+      bindTex(pr, 'uDelta', U_DELTA);
       if (b.kind === 'sky') {
         gl.uniform3f(pr.u.uCam, cam.x, cam.y, cam.z);
         bindTex(pr, 'uSky', U_SKY);
@@ -684,7 +938,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
       calls++;
     }
     // sprites
-    const ns = buildSprites(cam, basis, alpha);
+    const ns = buildSprites(cam, alpha);
     stat.sprites = ns;
     if (ns) {
       gl.useProgram(progSpr.p);
@@ -753,7 +1007,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
     gl.bindSampler(U_BLOOM, null);
     gl.bindSampler(U_SCENE, null);
 
-    if (q) { gl.endQuery(timerExt.TIME_ELAPSED_EXT); pendingQueries.push(q); }
+    if (qi >= 0) { gl.endQuery(timerExt.TIME_ELAPSED_EXT); qBusy[qi] = 1; qCount++; }
     stat.cpuMs = performance.now() - t0;
     if (opt.syncTiming) {
       const s0 = performance.now();
@@ -762,7 +1016,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
     }
     stat.gpuMs = lastGpuMs;
     stat.drawCalls = calls; stat.triangles = Math.round(tris);
-    stat.renderSize = [rt.w, rt.h];
+    stat.renderSize[0] = rt.w; stat.renderSize[1] = rt.h;
   }
 
   function setOptions(patch) {
@@ -772,24 +1026,28 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
     if (opt.classic) ensureLut();
   }
 
+  function setRenderScale(sc) { setOptions({ renderScale: Math.max(0.1, Math.min(4, +sc || 1)) }); }
+
   function dispose() {
     if (ro) ro.disconnect();
+    for (const q of qPool) gl.deleteQuery(q);
     freeTargets();
     for (const p of programs) gl.deleteProgram(p.p);
     for (const b of batches) { gl.deleteBuffer(b.vbo); gl.deleteBuffer(b.ibo); gl.deleteVertexArray(b.vao); }
-    for (const t of [wallTex, flatTex, wallInfo.tex, flatInfo.tex, secLightTex, skyTex, atlas, lutTex]) if (t) gl.deleteTexture(t);
+    for (const t of [wallTex, flatTex, wallInfo.tex, flatInfo.tex, secLightTex, deltaTex, skyTex, atlas, lutTex]) if (t) gl.deleteTexture(t);
     const ext = gl.getExtension('WEBGL_lose_context');
     if (ext) ext.loseContext();
   }
 
   resize();
   updateSectorLight(0);
+  uploadSectorLight();
 
   return {
-    setCamera, addLight, removeLight, updateLight, setEntities, render, resize, setOptions,
-    stats: () => stat, dispose,
+    setCamera, addLight, removeLight, updateLight, setEntities, render, resize, setOptions, setSectorHeights, setRenderScale,
+    stats: () => stat, dispose, _dbg: (q = []) => ({ ssinfo: q.map((i) => ({ i, box: Array.from(geo.ssBox.subarray(i * 4, i * 4 + 4)), sec: geo.ssSector[i], z: [secZLo[geo.ssSector[i]], secZHi[geo.ssSector[i]]], segs: subs[i], })), order: Array.from(order.subarray(0, orderN)), NL, nodes: nodes.length, zLo, zHi, planes: Array.from(planes), camX, camY, occlOn }),
     options: opt, gl,
-    info: () => ({ wallTextures: wallReg.entries.length, flats: flatReg.entries.length, staticSprites: staticThings.length, wallLayerSize: wallS, sky: skyName, geometry: { wall: geo.batches.wall.triangles, masked: geo.batches.masked.triangles, flat: geo.batches.flat.triangles, sky: geo.batches.sky.triangles } }),
+    info: () => ({ wallTextures: wallReg.entries.length, flats: flatReg.entries.length, staticSprites: staticThings.length, wallLayerSize: wallS, sky: skyName, bsp: haveBsp, dynamicSectors: geo.dynamic.reduce((a, b) => a + b, 0), geometry: { wall: geo.batches.wall.triangles, masked: geo.batches.masked.triangles, flat: geo.batches.flat.triangles, sky: geo.batches.sky.triangles } }),
   };
 }
 
@@ -797,7 +1055,9 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
  * Options (all optional): renderScale, dpr, fov, pixelStretch, bloom, bloomStrength, bloomThreshold, classic,
  * fogDensity, fogColor, ambient, lightGain, gamma, vignette, lodBias, things, animate, sectorEffects, sky,
  * maxLights, preserveDrawingBuffer, syncTiming. Most can be changed at runtime with setOptions().
- * Extras on the returned object: updateLight(id, patch), setOptions(patch), info().
+ * Extras on the returned object: updateLight(id, patch), setOptions(patch), setRenderScale(s), setSectorHeights(floors, ceils), info().
+ * setSectorHeights(floors, ceils): live sector heights from the sim (world.sectorFloor / sectorCeil, GameClient.sectorHeights());
+ * cheap enough to call every frame - only changed sectors touch a small float texture, no geometry is rebuilt.
  * render(dt, alpha): when alpha in [0,1) is given, camera and entities are interpolated between the previous and
  * the latest setCamera()/setEntities() call (fixed-tick gameplay + display-rate rendering).
  */

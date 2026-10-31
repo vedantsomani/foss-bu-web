@@ -1,5 +1,5 @@
 // host.js - authoritative host. Runs the sim at 60 Hz regardless of client behaviour (never waits for anyone).
-import { createWorld, step, addPlayer, removePlayer, DT, quantizeInput, hashWorld } from '../game/sim.js';
+import { createWorld, step, addPlayer, removePlayer, DT, quantizeInput, hashWorld, sectorState, initialSectorState } from '../game/sim.js';
 import { clonePlayer } from '../game/playercodec.js';
 import { MSG, TICK_MS, Reader, Writer, decodeInputPacket, encodeSnapshot, packBits } from './protocol.js';
 
@@ -14,6 +14,7 @@ export class GameHost {
     this.maxRewindTicks = Math.round(maxRewindMs / TICK_MS);
     this.interpTicks = Math.round(interpMs / TICK_MS);
     this.world = createWorld(map, seed, simOpts);
+    this.secInit = initialSectorState(this.world.prep); this.secCache = null; this.secCacheTick = -1; this.heights = null;
     this.peers = new Map();
     this.history = new Array(128).fill(null);
     this.evlog = [];
@@ -121,6 +122,16 @@ export class GameHost {
     for (const id in pos) out[id] = pos[id].alive ? pos[id] : { x: 1e9, y: 1e9, z: 1e9 };
     return out;
   }
+  // live authoritative sector heights {floors, ceils} (Float32Array, Doom units); the arrays are updated in place every tick
+  sectorHeights() {
+    const w = this.world;
+    if (!this.heights || this.heights.floors !== w.sectorFloor) this.heights = { floors: w.sectorFloor, ceils: w.sectorCeil };
+    return this.heights;
+  }
+  currentSectors() {
+    if (this.secCacheTick !== this.world.tick) { this.secCache = sectorState(this.world); this.secCacheTick = this.world.tick; }
+    return this.secCache;
+  }
   sendSnapshot(peer) {
     const w = this.world, tick = w.tick;
     const base = peer.ackSnap && peer.sent.get(peer.ackSnap) ? peer.sent.get(peer.ackSnap) : null;
@@ -129,9 +140,11 @@ export class GameHost {
     const bits = packBits(w.pickups.map(p => p.active));
     const changed = !base || base.bits.length !== bits.length || base.bits.some((b, i) => b !== bits[i]);
     const events = this.evlog.filter(x => x.tick > peer.prevSnapTick);
+    const sec = this.currentSectors(), switched = [];
+    for (let i = 0; i < w.switchedLines.length; i++) if (w.switchedLines[i]) switched.push(i);
     const bytes = encodeSnapshot({ tick, baseTick: base ? peer.ackSnap : 0, ackSeq: peer.lastExec, players, basePlayers: base ? base.players : null,
-      projectiles: w.projectiles, pickupBits: bits, pickupsChanged: changed, events });
-    peer.sent.set(tick, { players, bits });
+      projectiles: w.projectiles, pickupBits: bits, pickupsChanged: changed, events, sec, baseSec: base ? base.sec : this.secInit, switched });
+    peer.sent.set(tick, { players, bits, sec });
     for (const k of [...peer.sent.keys()]) if (k < peer.ackSnap) peer.sent.delete(k);
     while (peer.sent.size > 64) peer.sent.delete(peer.sent.keys().next().value);
     peer.prevSnapTick = peer.lastSnapTick; peer.lastSnapTick = tick;

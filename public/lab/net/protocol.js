@@ -30,7 +30,7 @@ export function decodeInputPacket(r) {
 }
 
 // ---- events
-const EV = { fire: 1, hit: 2, kill: 3, pickup: 4, explode: 5, impact: 6, spawn: 7, jump: 8, land: 9, switch: 10, respawnitem: 11 };
+const EV = { fire: 1, hit: 2, kill: 3, pickup: 4, explode: 5, impact: 6, spawn: 7, jump: 8, land: 9, switch: 10, respawnitem: 11, teleport: 12, mover: 13 };
 const EVN = Object.fromEntries(Object.entries(EV).map(([k, v]) => [v, k]));
 const u8 = v => (v === undefined || v < 0 ? 255 : v & 255);
 const i16 = v => Math.max(-32768, Math.min(32767, Math.round(v || 0)));
@@ -47,6 +47,8 @@ export function writeEvent(w, e, snapTick, evTick) {
     case 'land': a = u8(e.p); c = Math.min(65535, e.v | 0); break;
     case 'switch': a = u8(e.p); b = u8(e.w); break;
     case 'respawnitem': c = e.idx; break;
+    case 'teleport': a = u8(e.p); b = e.out ? 1 : 0; c = (e.yaw | 0) & 0xffff; break;
+    case 'mover': b = e.a & 255; c = e.s; break;
   }
   w.u8(a); w.u8(b); w.u16(c); w.i16(i16(e.x)); w.i16(i16(e.y)); w.i16(i16(e.z));
 }
@@ -64,13 +66,23 @@ export function readEvent(r, snapTick) {
     case 'land': e.p = id(a); e.v = c; break;
     case 'switch': e.p = id(a); e.w = b; break;
     case 'respawnitem': e.idx = c; break;
+    case 'teleport': e.p = id(a); e.out = !!b; e.yaw = c; break;
+    case 'mover': e.a = b; e.s = c; break;
   }
   return e;
 }
 
 // ---- snapshot
 // header: type u8, tick u32, baseTick u32 (0 = full), ackSeq u32; players; removed; projectiles; pickups; events
-export function encodeSnapshot({ tick, baseTick, ackSeq, players, basePlayers, projectiles, pickupBits, pickupsChanged, events }) {
+// Sector state: Float32Array(nSec*6) tuples [floor, ceil, floorVel, ceilVel, floorTarget, ceilTarget]; only tuples that differ from the base are sent.
+export const SEC_STRIDE = 6;
+function writeSectors(w, cur, base) {
+  const n = cur.length / SEC_STRIDE, idx = [];
+  for (let i = 0; i < n; i++) { const o = i * SEC_STRIDE; for (let k = 0; k < SEC_STRIDE; k++) if (cur[o + k] !== base[o + k]) { idx.push(i); break; } }
+  w.u16(idx.length);
+  for (const i of idx) { w.u16(i); for (let k = 0; k < SEC_STRIDE; k++) w.f32(cur[i * SEC_STRIDE + k]); }
+}
+export function encodeSnapshot({ tick, baseTick, ackSeq, players, basePlayers, projectiles, pickupBits, pickupsChanged, events, sec, baseSec, switched }) {
   const w = new Writer(512);
   w.u8(MSG.SNAPSHOT); w.u32(tick); w.u32(baseTick); w.u32(ackSeq);
   const ids = Object.keys(players).map(Number).sort((a, b) => a - b);
@@ -85,12 +97,17 @@ export function encodeSnapshot({ tick, baseTick, ackSeq, players, basePlayers, p
   const evs = events.slice(-120);
   w.u8(evs.length);
   for (const { tick: et, e } of evs) writeEvent(w, e, tick, et);
+  if (sec) writeSectors(w, sec, baseSec);
+  else w.u16(0);
+  const sw = switched || []; w.u8(Math.min(255, sw.length)); for (let i = 0; i < Math.min(255, sw.length); i++) w.u16(sw[i]);
   return w.bytes();
 }
-export function decodeSnapshot(r, basePlayersFor) {
+// baseSecFor(tick) -> Float32Array state of that snapshot (or null); initSec = state for full snapshots (baseTick 0)
+export function decodeSnapshot(r, basePlayersFor, baseSecFor, initSec) {
   const tick = r.u32(), baseTick = r.u32(), ackSeq = r.u32();
   const base = baseTick ? basePlayersFor(baseTick) : null;
-  if (baseTick && !base) return { missingBase: true, tick, baseTick };
+  const baseSec = baseTick ? (baseSecFor ? baseSecFor(baseTick) : null) : initSec || null;
+  if (baseTick && (!base || (initSec && !baseSec))) return { missingBase: true, tick, baseTick };
   const players = {};
   const n = r.u8();
   for (let i = 0; i < n; i++) { const id = r.u8(); players[id] = readPlayer(r, base ? base[id] : null, id); }
@@ -104,7 +121,12 @@ export function decodeSnapshot(r, basePlayersFor) {
   if (r.u8()) { const len = r.u16(); pickupBits = []; for (let i = 0; i < len; i++) pickupBits.push(r.u8()); }
   const ne = r.u8(); const events = [];
   for (let i = 0; i < ne; i++) events.push(readEvent(r, tick));
-  return { tick, baseTick, ackSeq, players, projectiles, pickupBits, events };
+  let sec = null;
+  const nsc = r.u16();
+  if (baseSec) { sec = baseSec.slice(); }
+  for (let i = 0; i < nsc; i++) { const si = r.u16(); for (let k = 0; k < SEC_STRIDE; k++) { const v = r.f32(); if (sec) sec[si * SEC_STRIDE + k] = v; } }
+  const nsw = r.u8(), switched = []; for (let i = 0; i < nsw; i++) switched.push(r.u16());
+  return { tick, baseTick, ackSeq, players, projectiles, pickupBits, events, sec, switched };
 }
 export function packBits(arr) { const out = new Array(Math.ceil(arr.length / 8)).fill(0); arr.forEach((a, i) => { if (a) out[i >> 3] |= 1 << (i & 7); }); return out; }
 export const unpackBit = (bits, i) => (bits[i >> 3] >> (i & 7)) & 1;

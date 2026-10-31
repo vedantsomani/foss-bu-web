@@ -29,10 +29,11 @@ float doomShade(float light, float depth) {
   return max(1.0 - idx * (1.0 / 32.0), uAmbient);
 }
 
-vec3 dynLight(vec3 p, vec3 n) {
+vec3 dynLight(vec3 p, vec3 n, int mask) {
   vec3 sum = vec3(0.0);
   for (int i = 0; i < 16; i++) {
     if (i >= uNL) break;
+    if (((mask >> i) & 1) == 0) continue;      // light can not reach this sector (walls/closed doors in between)
     vec3 d = uLP[i].xyz - p;
     float dist = length(d);
     float a = max(1.0 - dist / uLP[i].w, 0.0);
@@ -43,20 +44,33 @@ vec3 dynLight(vec3 p, vec3 n) {
   return sum * uLightGain;
 }
 
-vec3 shadeColor(vec3 base, float light, float depth, vec3 p, vec3 n) {
+vec3 shadeColor(vec3 base, float light, float depth, vec3 p, vec3 n, int mask) {
   float sh = doomShade(light, depth);
-  vec3 c = base * (sh + dynLight(p, n));
+  vec3 c = base * (sh + dynLight(p, n, mask));
   float f = 1.0 - exp(-depth * uFogDensity);
   return mix(c, uFogColor * (0.25 + 0.75 * sh), f);
 }
 `;
 
-export const GEO_VS = HEAD + `
+// Live sector heights: uDelta holds (live - map) height per slot (sector*2 + floor|ceil), 256 slots per row.
+const DISP = `
+uniform sampler2D uDelta;
+float slotDelta(float b) {
+  int i = int(b + 0.5);
+  return texelFetch(uDelta, ivec2(i & 255, i >> 8), 0).r;
+}
+`;
+
+export const GEO_VS = HEAD + DISP + `
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec2 aUV;
 layout(location=2) in float aTex;
 layout(location=3) in float aSec;
 layout(location=4) in float aAdj;
+layout(location=5) in float aBind;
+layout(location=6) in float aAnchor;
+layout(location=7) in float aOther;
+layout(location=8) in float aZo;
 uniform mat4 uVP;
 uniform sampler2D uInfo;
 uniform sampler2D uSecLight;
@@ -65,15 +79,26 @@ out vec2 vUV;
 flat out vec4 vInfo;
 out float vLight;
 out float vDepth;
+flat out int vMask;
 void main() {
-  vec4 cp = uVP * vec4(aPos, 1.0);
+  vec3 p = aPos;
+  vec2 uv = aUV;
+  if (aBind >= 0.0) {
+    float d = slotDelta(aBind);
+    p.z += d;
+    if (aAnchor > -1.5) uv.y += (aAnchor >= 0.0 ? slotDelta(aAnchor) : 0.0) - d;
+    if (aOther > 0.5) p.z = max(p.z, aZo + slotDelta(aOther - 1.0));
+  }
+  vec4 cp = uVP * vec4(p, 1.0);
   gl_Position = cp;
   vDepth = cp.w;
-  vPos = aPos;
-  vUV = aUV;
+  vPos = p;
+  vUV = uv;
   vInfo = texelFetch(uInfo, ivec2(int(aTex + 0.5), 0), 0);
   int s = int(aSec + 0.5);
-  vLight = texelFetch(uSecLight, ivec2(s & 255, s >> 8), 0).r + aAdj;
+  vec2 sl = texelFetch(uSecLight, ivec2(s & 255, s >> 8), 0).rg;
+  vLight = sl.r + aAdj;
+  vMask = int(sl.g + 0.5);
 }
 `;
 
@@ -83,11 +108,14 @@ in vec2 vUV;
 flat in vec4 vInfo;
 in float vLight;
 in float vDepth;
+flat in int vMask;
 uniform sampler2DArray uTex;
 uniform float uLodBias;
 uniform float uClipZ;
 ${LIGHT}
 out vec4 oColor;
+// 4x4 ordered dither: mip level changes become a fine retro dither instead of hard bands (grazing-angle floors)
+const float BAYER4[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
 void main() {
   if (vPos.z > uClipZ) discard;
   vec2 size = vInfo.yz;
@@ -95,7 +123,9 @@ void main() {
   float rho2 = max(dot(dx, dx), dot(dy, dy));
   float lod = 0.5 * log2(max(rho2, 1e-8)) + uLodBias;
   float maxl = floor(log2(max(size.x, size.y)));
-  float k = clamp(floor(lod + 0.5), 0.0, maxl);
+  ivec2 fp = ivec2(gl_FragCoord.xy) & 3;
+  float dither = (BAYER4[fp.y * 4 + fp.x] + 0.5) * (1.0 / 16.0);
+  float k = clamp(floor(lod + dither), 0.0, maxl);
   vec2 szk = max(floor(size / exp2(k)), vec2(1.0));
   vec2 t = floor(vUV / exp2(k));
 #ifdef MASKED
@@ -108,15 +138,26 @@ void main() {
   vec4 c = texelFetch(uTex, ivec3(ivec2(t), int(vInfo.x + 0.5)), int(k));
   if (c.a < 0.5) discard;
   vec3 n = normalize(cross(dFdx(vPos), dFdy(vPos)) + vec3(1e-9));
-  oColor = vec4(shadeColor(c.rgb, vLight, vDepth, vPos, n), 1.0);
+  oColor = vec4(shadeColor(c.rgb, vLight, vDepth, vPos, n, vMask), 1.0);
 }
 `;
 
-export const SKY_VS = HEAD + `
+export const SKY_VS = HEAD + DISP + `
 layout(location=0) in vec3 aPos;
+layout(location=5) in float aBind;
+layout(location=7) in float aOther;
+layout(location=8) in float aZo;
 uniform mat4 uVP;
 out vec3 vPos;
-void main() { gl_Position = uVP * vec4(aPos, 1.0); vPos = aPos; }
+void main() {
+  vec3 p = aPos;
+  if (aBind >= 0.0) {
+    p.z += slotDelta(aBind);
+    if (aOther > 0.5) p.z = max(p.z, aZo + slotDelta(aOther - 1.0));
+  }
+  gl_Position = uVP * vec4(p, 1.0);
+  vPos = p;
+}
 `;
 
 export const SKY_FS = HEAD + `
@@ -145,16 +186,18 @@ layout(location=0) in vec3 aPos;
 layout(location=1) in vec2 aUV;
 layout(location=2) in float aLight;
 layout(location=3) in float aFb;
+layout(location=4) in float aMask;
 uniform mat4 uVP;
 out vec3 vPos;
 out vec2 vUV;
 out float vLight;
 out float vFb;
 out float vDepth;
+flat out int vMask;
 void main() {
   vec4 cp = uVP * vec4(aPos, 1.0);
   gl_Position = cp;
-  vDepth = cp.w; vPos = aPos; vUV = aUV; vLight = aLight; vFb = aFb;
+  vDepth = cp.w; vPos = aPos; vUV = aUV; vLight = aLight; vFb = aFb; vMask = int(aMask + 0.5);
 }
 `;
 
@@ -164,6 +207,7 @@ in vec2 vUV;
 in float vLight;
 in float vFb;
 in float vDepth;
+flat in int vMask;
 uniform sampler2D uAtlas;
 ${LIGHT}
 out vec4 oColor;
@@ -171,7 +215,7 @@ void main() {
   vec4 c = texture(uAtlas, vUV);
   if (c.a < 0.5) discard;
   vec3 n = normalize(uCam - vPos);
-  vec3 lit = shadeColor(c.rgb, vLight, vDepth, vPos, n);
+  vec3 lit = shadeColor(c.rgb, vLight, vDepth, vPos, n, vMask);
   oColor = vec4(mix(lit, c.rgb, vFb), 1.0);
 }
 `;

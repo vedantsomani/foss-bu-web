@@ -1,7 +1,12 @@
 // demo.js - Fragline render lab demo. Query: ?map=MAP07 &scale=0.5 &classic=1 &bloom=0 &fov=100 &cam=x,y,z,angleDeg,pitchDeg
 //                                              &bench=1 &frames=300 &things=0
+//   &door=1        run the real sim (game/sim.js) in the page: every door/lift/floor special in the map is triggered every ~6 s and
+//                  the live heights are fed to renderer.setSectorHeights() each frame
+//   &doorcam=N     (with door=1) put the camera 70 units in front of the N-th manual door, looking at it;  &t=TICKS pre-runs the sim
+//   &light=x,y,z,radius   one static dynamic light (to check that it does not leak through walls)
 import { fetchWad, parseMap, pointInSector } from '../wad.js';
 import { createRenderer } from './renderer.js';
+import * as S from '../game/sim.js';
 
 const q = new URLSearchParams(location.search);
 const canvas = document.getElementById('c');
@@ -27,6 +32,7 @@ async function main() {
   };
   if (q.get('dpr')) opts.dpr = parseFloat(q.get('dpr'));
   if (q.get('fog')) opts.fogDensity = parseFloat(q.get('fog'));
+  if (q.get('noocc') === '1') opts.noOcclusion = true;
   if (q.get('ambient')) opts.ambient = parseFloat(q.get('ambient'));
   const t1 = performance.now();
   const r = createRenderer(canvas, wad, map, opts);
@@ -41,7 +47,33 @@ async function main() {
     const [x, y, z, a, p] = q.get('cam').split(',').map(Number);
     Object.assign(cam, { x, y, z: Number.isFinite(z) ? z : floorAt(x, y) + 41, angle: (a || 0) * Math.PI / 180, pitch: (p || 0) * Math.PI / 180 });
   }
-  window.__demo = { renderer: r, cam, map, tWad, tBuild };
+  // ---- ?door=1: real sim heights -> renderer
+  let sim = null, simAcc = 0, doorLines = [];
+  if (q.get('door') === '1') {
+    sim = S.createWorld(map, 1);
+    const fam = new Set(['mdoor', 'door', 'lift', 'floor', 'perp']);
+    const seen = new Set();   // one trigger per door sector / tag (a door has a DR line on each face; using both would reverse it)
+    doorLines = map.linedefs.map((l, i) => i).filter((i) => {
+      const l = map.linedefs[i], sp = S.lineSpecialInfo(l.special);
+      if (!sp || !fam.has(sp.fam) || !(sp.fam === 'mdoor' || l.tag)) return false;
+      const key = sp.fam === 'mdoor' ? 's' + sim.prep.lines[i].bs : 't' + l.tag;
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+    const manual = doorLines.filter((i) => S.lineSpecialInfo(map.linedefs[i].special).fam === 'mdoor');
+    if (q.get('doorcam') !== null && manual.length) {
+      const L = sim.prep.lines[manual[parseInt(q.get('doorcam'), 10) % manual.length]];
+      const mx = (L.ax + L.bx) / 2, my = (L.ay + L.by) / 2, nx = L.dy / L.len, ny = -L.dx / L.len; // front = right of v1->v2
+      cam.x = mx + nx * 70; cam.y = my + ny * 70; cam.angle = Math.atan2(-ny, -nx); cam.pitch = 0;
+      cam.z = (sim.sectorFloor[L.fs] ?? 0) + 41;
+    }
+    const pre = parseInt(q.get('t') || '0', 10);
+    for (const li of doorLines) S.triggerLine(sim, li);
+    for (let i = 0; i < pre; i++) S.step(sim, {});
+    r.setSectorHeights(sim.sectorFloor, sim.sectorCeil);
+  }
+  if (q.get('light')) { const [lx, ly, lz, lr] = q.get('light').split(',').map(Number); r.addLight({ x: lx, y: ly, z: lz, radius: lr || 300, color: [1, 0.75, 0.4], intensity: 2 }); }
+  window.__demo = { renderer: r, cam, map, tWad, tBuild, sim };
 
   // ---- input
   const keys = new Set();
@@ -118,6 +150,15 @@ async function main() {
       }
       r.setEntities(rockets.map((k, i) => ({ id: 'r' + i, x: k.x, y: k.y, z: k.z - 8, sprite: 'MISLA1', fullbright: true })).concat(window.__extraEnts || []));
     }
+    if (sim) {
+      simAcc += bench ? 2 / 60 : dt;
+      while (simAcc >= 1 / 60) {
+        simAcc -= 1 / 60;
+        if (sim.tick % 360 === 0) for (const li of doorLines) S.triggerLine(sim, li);
+        S.step(sim, {});
+      }
+      r.setSectorHeights(sim.sectorFloor, sim.sectorCeil);
+    }
     r.setCamera(cam);
     r.render(dt);
     const st = r.stats();
@@ -128,7 +169,7 @@ async function main() {
     const avg = hist.reduce((a, b) => a + b, 0) / hist.length;
     hud.textContent = `${mapName}  ${fps.toFixed(0)} fps  frame ${avg.toFixed(2)} ms (worst ${Math.max(...hist).toFixed(1)})\n`
       + `cpu ${st.cpuMs.toFixed(2)} ms  gpu ${st.gpuMs == null ? 'n/a' : st.gpuMs.toFixed(2) + ' ms'}\n`
-      + `draws ${st.drawCalls}  tris ${st.triangles}  sectors ${st.visibleSectors}  sprites ${st.sprites}\n`
+      + `draws ${st.drawCalls}  tris ${st.triangles}  sectors ${st.visibleSectors}  subsectors ${st.visibleSubsectors}  sprites ${st.sprites}\n`
       + `internal ${st.renderSize[0]}x${st.renderSize[1]}  scale ${r.options.renderScale.toFixed(2)}  ${r.options.classic ? 'classic' : 'modern'}${r.options.bloom ? ' bloom' : ''}`;
     if (bench && frame > N) { finishBench(); return; }
     requestAnimationFrame(tick);
@@ -144,7 +185,8 @@ async function main() {
       frameIntervalMs: { avg: avgOf(frameMs), p95: pct(frameMs, 0.95), max: Math.max(...frameMs) },
       cpuMs: { avg: avgOf(cpuMs), p95: pct(cpuMs, 0.95) },
       cpuPlusFinishMs: /* gl.finish() may not block in Chromium's GPU-process model; treat as ~cpu */ { avg: avgOf(syncMs), p95: pct(syncMs, 0.95) },
-      gpuTimerMs: gpuMs.length ? { avg: avgOf(gpuMs), p95: pct(gpuMs, 0.95), samples: gpuMs.length } : null, // EXT_disjoint_timer_query (software GL here) drawCalls: st.drawCalls, triangles: st.triangles, info: r.info(),
+      gpuTimerMs: gpuMs.length ? { avg: avgOf(gpuMs), p95: pct(gpuMs, 0.95), samples: gpuMs.length } : null, // EXT_disjoint_timer_query (software GL in headless runs)
+      drawCalls: st.drawCalls, triangles: st.triangles, visibleSectors: st.visibleSectors, visibleSubsectors: st.visibleSubsectors, info: r.info(),
     };
     hud.textContent = 'bench done ' + JSON.stringify(window.benchResult.cpuPlusFinishMs);
   }

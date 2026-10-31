@@ -1,15 +1,18 @@
 // client.js - prediction + reconciliation for the local player, interpolation for everyone else.
-import { createPredictWorld, runCommand, quantizeInput, DT, EYE } from '../game/sim.js';
+import { createPredictWorld, runCommand, quantizeInput, DT, EYE, initialSectorState } from '../game/sim.js';
 import { clonePlayer } from '../game/playercodec.js';
-import { MSG, TICK_MS, REDUNDANCY, Reader, Writer, encodeInputPacket, decodeSnapshot, unpackBit } from './protocol.js';
+import { MSG, TICK_MS, REDUNDANCY, Reader, Writer, encodeInputPacket, decodeSnapshot, unpackBit, SEC_STRIDE } from './protocol.js';
 import { Interpolator } from './interp.js';
 
 export class GameClient {
   // inputSource(): () => {fwd,side,yaw,pitch,buttons,weapon}, polled once per 60 Hz client tick
-  constructor({ map, endpoint, hostId = 1, id, interpMs = 100, inputSource = () => ({}), redundancy = REDUNDANCY }) {
+  constructor({ map, endpoint, hostId = 1, id, interpMs = 100, inputSource = () => ({}), redundancy = REDUNDANCY, pointInSector = null }) {
     this.map = map; this.ep = endpoint; this.hostId = hostId; this.id = id; this.interpTicks = interpMs / TICK_MS;
     this.inputSource = inputSource; this.redundancy = redundancy;
-    this.pw = createPredictWorld(map);
+    this.pw = createPredictWorld(map, pointInSector ? { pointInSector } : {});
+    // authoritative sector state (see protocol SEC_STRIDE tuples); pw heights follow it, extrapolated along the sent velocities
+    this.secInit = initialSectorState(this.pw.prep); this.secStates = new Map(); this.secCur = this.secInit.slice(); this.moving = [];
+    this.heights = { floors: this.pw.sectorFloor, ceils: this.pw.sectorCeil };
     this.me = null; this.auth = null;           // predicted + last authoritative local player
     this.pending = []; this.seq = 0; this.localTick = 0;
     this.interp = new Interpolator();
@@ -25,7 +28,7 @@ export class GameClient {
     this.stats.bytesIn += data.length;
     const r = new Reader(data); const type = r.u8();
     if (type === MSG.WELCOME) { this.welcomed = true; r.u8(); }
-    else if (type === MSG.SNAPSHOT) this.onSnapshot(decodeSnapshot(r, t => this.snapStates.get(t)));
+    else if (type === MSG.SNAPSHOT) this.onSnapshot(decodeSnapshot(r, t => this.snapStates.get(t), t => this.secStates.get(t), this.secInit));
     else if (type === MSG.PONG) this.stats.rtt = this.now - r.u32();
   }
   get ready() { return !!this.me; }
@@ -34,8 +37,9 @@ export class GameClient {
     if (s.tick <= this.lastSnapTick) return;
     this.stats.snapshots++;
     this.lastSnapTick = s.tick; this.ackedSnap = s.tick;
-    this.snapStates.set(s.tick, s.players);
-    for (const k of this.snapStates.keys()) if (k < s.tick - 64) this.snapStates.delete(k);
+    this.snapStates.set(s.tick, s.players); this.secStates.set(s.tick, s.sec);
+    for (const k of this.snapStates.keys()) if (k < s.tick - 64) { this.snapStates.delete(k); this.secStates.delete(k); }
+    this.applySectors(s.sec, s.switched);
     const remote = {};
     for (const k in s.players) if (+k !== this.id) remote[k] = s.players[k];
     this.interp.push(s.tick, remote);
@@ -50,6 +54,31 @@ export class GameClient {
     const auth = s.players[this.id];
     if (auth) this.reconcile(auth, s.ackSeq);
   }
+  applySectors(sec, switched) {
+    const F = this.pw.sectorFloor, C = this.pw.sectorCeil, cur = this.secCur, mv = this.moving;
+    mv.length = 0;
+    for (let i = 0, n = F.length; i < n; i++) {
+      const o = i * SEC_STRIDE, moving = sec[o + 2] !== 0 || sec[o + 3] !== 0;
+      const changed = sec[o] !== cur[o] || sec[o + 1] !== cur[o + 1] || sec[o + 2] !== cur[o + 2] || sec[o + 3] !== cur[o + 3] || sec[o + 4] !== cur[o + 4] || sec[o + 5] !== cur[o + 5];
+      if (changed) for (let k = 0; k < SEC_STRIDE; k++) cur[o + k] = sec[o + k];
+      if (changed || moving) { F[i] = sec[o]; C[i] = sec[o + 1]; }
+      if (moving) mv.push(i);
+    }
+    const sw = this.pw.switchedLines; sw.fill(0); for (const li of switched) sw[li] = 1;
+  }
+  // keep moving sectors gliding between snapshots (clamped at the target the host sent) so prediction rides lifts smoothly
+  extrapolateSectors() {
+    const F = this.pw.sectorFloor, C = this.pw.sectorCeil, cur = this.secCur, mv = this.moving;
+    for (let k = 0; k < mv.length; k++) {
+      const i = mv[k], o = i * SEC_STRIDE, fv = cur[o + 2], cv = cur[o + 3];
+      if (fv) { const f = F[i] + fv; F[i] = fv > 0 ? Math.min(f, cur[o + 4]) : Math.max(f, cur[o + 4]); }
+      if (cv) { const c = C[i] + cv; C[i] = cv > 0 ? Math.min(c, cur[o + 5]) : Math.max(c, cur[o + 5]); }
+    }
+  }
+  // authoritative live heights {floors, ceils} (Float32Array, Doom units). Updated in place; moving sectors are advanced along
+  // their last known velocity between snapshots, everything else equals the latest snapshot exactly.
+  sectorHeights() { return this.heights; }
+  get switchedLines() { return this.pw.switchedLines; }
   reconcile(auth, ackSeq) {
     this.auth = auth;
     const m = clonePlayer(auth); m.lastSeq = ackSeq;
@@ -86,6 +115,7 @@ export class GameClient {
   tick() {
     this.localTick++;
     const k = 0.85; this.offsetX *= k; this.offsetY *= k; this.offsetZ *= k;
+    this.extrapolateSectors();
     if (!this.me) return;
     const raw = this.inputSource();
     const cmd = quantizeInput({ ...raw, seq: ++this.seq, viewTick: Math.round(this.renderTick) });
