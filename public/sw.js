@@ -4,6 +4,9 @@ const CACHE = `fragline-${VERSION}`;
 // Large game files are fetched with ?v=<version>, so a cached copy is always the right one.
 const VERSIONED = /\.(gz|wad|cfg|js|css)$/;
 
+// Room links (/abcd2345) are all the same page; other pages (credits.html) keep their own entry.
+const pageKey = url => (/^\/[a-hjkmnp-z2-9]{8}$/.test(url.pathname) ? '/' : url.pathname);
+
 self.addEventListener('install', () => self.skipWaiting());
 
 self.addEventListener('activate', event => {
@@ -29,9 +32,9 @@ self.addEventListener('fetch', event => {
         event.respondWith(fetch(event.request).then(response => {
             if (response.ok) {
                 const copy = response.clone();
-                caches.open(CACHE).then(cache => cache.put('/', copy));
+                caches.open(CACHE).then(cache => cache.put(pageKey(url), copy));
             }
             return response;
-        }).catch(async () => (await caches.match('/')) || Response.error()));
+        }).catch(async () => (await caches.match(pageKey(url))) || (await caches.match('/')) || Response.error()));
     }
 });

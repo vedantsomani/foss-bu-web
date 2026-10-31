@@ -59,6 +59,8 @@
     function fail(title, detail) {
         stopPolling();
         exitImmersive();
+        document.exitPointerLock?.();
+        $('click-play').hidden = true;
         $('message-title').textContent = title;
         $('message-text').textContent = detail || '';
         show('message');
@@ -252,10 +254,15 @@
             }, () => {});
         }],
         onRuntimeInitialized: () => resolveReady(),
+        // "Quit Game" in the Esc menu ends the engine; without this the page is left on a dead black canvas.
+        onExit: () => { if (state.running) fail('Match ended', 'You left the game. Go back to the menu to play again.'); },
+        onAbort: () => { if (state.running) fail('The game stopped', 'The engine hit an error. Go back to the menu and start again.'); },
         print: engineMessage,
         printErr: text => { if (debug) console.warn(text); },
         setStatus: () => {},
     };
+
+    window.fraglineConfigs = engineConfigs; // exposed for tests
 
     function engineArgs(extra) {
         const args = ['-iwad', 'freedm.wad', '-file', 'fragline.wad', '-window', '-nogui', '-nomusic',
@@ -776,9 +783,11 @@
         $('fullscreen').addEventListener('click', toggleFullscreen);
         $('canvas').addEventListener('click', () => { $('canvas').focus({preventScroll: true}); if (state.started) capturePointer(); });
         $('click-play-btn').addEventListener('click', () => { $('click-play').hidden = true; capturePointer(); $('canvas').focus({preventScroll: true}); });
+        let escAt = 0;
+        document.addEventListener('keydown', event => { if (event.key === 'Escape') escAt = performance.now(); }, true);
         document.addEventListener('pointerlockchange', () => {
             if (document.pointerLockElement) $('click-play').hidden = true;
-            else if (state.started && $('panel').hidden && !padConnected()) $('click-play').hidden = false;
+            else if (state.started && $('panel').hidden && $('click-play').hidden && performance.now() - escAt > 400) toast('Click the game to capture the mouse again.', 3000);
         });
         window.addEventListener('popstate', () => { if (!state.running) location.reload(); });
         window.addEventListener('error', event => console.error(event.error || event.message));

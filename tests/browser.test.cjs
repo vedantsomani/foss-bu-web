@@ -70,6 +70,40 @@ async function openPage(browser, url, errors) {
         assert.match(await missing.textContent('#message-title'), /not found/i);
         console.log('late join and unknown room show clear messages');
 
+        // Pasting a whole invite link into the code box works, and a full room says so.
+        const pasted = await openPage(browser, server.base + '/', errors);
+        await pasted.fill('#room-code', `${server.base}/${code}`);
+        await pasted.press('#room-code', 'Enter');
+        await pasted.waitForSelector('#screen-message:not([hidden])', {timeout: 15000});
+        assert.match(await pasted.textContent('#message-title'), /already started/i);
+        const bad = await openPage(browser, server.base + '/', errors);
+        await bad.fill('#room-code', 'nope');
+        await bad.click('#join-form button');
+        assert.match(await bad.textContent('#room-error'), /8-character/);
+
+        // Settings survive a reload and reach the engine's config files.
+        const prefs = await openPage(browser, server.base + '/', errors);
+        await prefs.click('#open-settings');
+        await prefs.click('#tab-controls');
+        await prefs.locator('label:has(#controller-enabled)').click();
+        await prefs.click('#screen-settings .seg-btn:has-text("Large")');
+        await prefs.reload();
+        assert.equal(await prefs.isChecked('#controller-enabled'), false);
+        assert.equal(await prefs.inputValue('#controller-deadzone'), '0.4');
+        const cfg = await prefs.evaluate(() => (window.fraglineConfigs || (() => ({})))());
+        assert.match(cfg['extra.cfg'] || '', /use_gamepad\s+0/);
+        assert.match(cfg['extra.cfg'] || '', /joystick_x_dead_zone\s+40/);
+
+        // Leaving a lobby goes home without a "leave site?" prompt and stops the room from starting a game.
+        const leaver = await openPage(browser, server.base + '/', errors);
+        leaver.on('dialog', dialog => { errors.push('unexpected dialog ' + dialog.type()); dialog.dismiss(); });
+        await leaver.click('#new-match');
+        await leaver.click('#create-room');
+        await leaver.waitForSelector('#screen-lobby:not([hidden])', {timeout: 15000});
+        await leaver.click('#screen-lobby [data-home]');
+        await leaver.waitForSelector('#screen-home:not([hidden])', {timeout: 15000});
+        console.log('pasted link, settings persistence and leaving a lobby work');
+
         const solo = await openPage(browser, server.base + '/', errors);
         await solo.click('#new-match');
         await solo.selectOption('#match-map', '5');
