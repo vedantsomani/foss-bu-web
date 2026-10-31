@@ -55,7 +55,10 @@ export class HostLobby {
 
 export class ClientLobby {
   constructor(code, { onUpdate, onStart, onError }) {
-    this.code = code; this.onUpdate = onUpdate; this.onStart = onStart; this.onError = onError; this.closed = false; this.got = false;
+    this.code = code; this.onUpdate = onUpdate; this.onStart = onStart; this.onError = onError; this.closed = false; this.got = false; this.lastLobby = performance.now();
+    this.watch = setInterval(() => {   // the host broadcasts every second; silence means it left
+      if (this.got && !this.started && !this.closed && performance.now() - this.lastLobby > 6000) { this.close(); this.onError('The host left the room'); }
+    }, 1000);
     this.connect(2);
   }
   connect(uid) {
@@ -65,8 +68,8 @@ export class ClientLobby {
     t.onOpen = () => { hello(); this.hb = setInterval(hello, 500); };
     t.onPacket = (from, d) => {
       if (from !== 1) return;
-      if (d[0] === LOBBY) { this.got = true; this.onUpdate(unpack(d)); }
-      else if (d[0] === START && !this.started) { this.started = true; clearInterval(this.hb); this.onStart(unpack(d), t, uid); }
+      if (d[0] === LOBBY) { this.got = true; this.lastLobby = performance.now(); this.onUpdate(unpack(d)); }
+      else if (d[0] === START && !this.started) { this.started = true; clearInterval(this.hb); clearInterval(this.watch); this.onStart(unpack(d), t, uid); }
     };
     t.onClose = e => {
       clearInterval(this.hb);
@@ -75,5 +78,5 @@ export class ClientLobby {
       this.onError(e && e.reason ? e.reason : this.got ? 'Disconnected from the room' : 'Could not join the room (full, started or expired)');
     };
   }
-  close() { this.closed = true; clearInterval(this.hb); this.t.close(); }
+  close() { this.closed = true; clearInterval(this.hb); clearInterval(this.watch); this.t.close(); }
 }

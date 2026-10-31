@@ -16,20 +16,25 @@ export class Hud {
   show(v) { this.root.hidden = !v; }
   txt(key, el, v) { if (this.c[key] !== v) { this.c[key] = v; el.textContent = v; } }
   cls(key, el, name, on) { if (this.c[key] !== on) { this.c[key] = on; el.classList.toggle(name, on); } }
-  // me: local state; timeLeft seconds; lead: text
-  update(me, timeLeft, lead) {
-    const e = this.el;
-    this.txt('hp', e.hp, String(Math.max(0, me.health))); this.cls('hplow', e.hp, 'low', me.alive && me.health <= 25);
-    const hpw = Math.min(100, Math.max(0, me.health)); if (this.c.hpw !== hpw) { this.c.hpw = hpw; e.hpBar.style.transform = `scaleX(${hpw / 100})`; e.hpBar.style.background = hpw > 50 ? '#ff7a2f' : hpw > 25 ? '#ffb02f' : '#ff5b4b'; }
-    this.txt('ar', e.ar, String(me.armor));
-    const w = WEAPONS[me.weapon]; this.txt('wn', e.wname, w.name);
-    this.txt('am', e.ammo, String(me.ammo[w.ammoType]));
+  // me: local state; timeLeft seconds; lead: text. Numbers are compared before any string is built (no per-frame garbage).
+  update(me, timeLeft, bestId, best, nameOf) {
+    const e = this.el, c = this.c;
+    if (c.hpN !== me.health || c.alv !== me.alive) {
+      c.hpN = me.health; c.alv = me.alive;
+      const hp = Math.max(0, me.health); e.hp.textContent = hp; e.hp.classList.toggle('low', me.alive && hp <= 25);
+      const w = Math.min(100, hp); e.hpBar.style.transform = `scaleX(${w / 100})`; e.hpBar.style.background = w > 50 ? '#ff7a2f' : w > 25 ? '#ffb02f' : '#ff5b4b';
+    }
+    if (c.arN !== me.armor) { c.arN = me.armor; e.ar.textContent = me.armor; }
+    if (c.wN !== me.weapon) { c.wN = me.weapon; e.wname.textContent = WEAPONS[me.weapon].name; }
+    const ammo = me.ammo[WEAPONS[me.weapon].ammoType]; if (c.amN !== ammo) { c.amN = ammo; e.ammo.textContent = ammo; }
     for (let i = 0; i < this.slots.length; i++) {
       const o = (me.owned >> i) & 1, cur = me.weapon === i, dry = o && me.ammo[WEAPONS[i].ammoType] < WEAPONS[i].cost;
       const k = (o ? 1 : 0) | (cur ? 2 : 0) | (dry ? 4 : 0);
-      if (this.c['s' + i] !== k) { this.c['s' + i] = k; this.slots[i].className = (o ? 'own ' : '') + (cur ? 'cur ' : '') + (dry ? 'dry' : ''); }
+      if (c['s' + i] !== k) { c['s' + i] = k; this.slots[i].className = (o ? 'own ' : '') + (cur ? 'cur ' : '') + (dry ? 'dry' : ''); }
     }
-    this.txt('fr', e.frags, String(me.frags)); this.txt('tm', e.timer, fmtTime(timeLeft)); this.txt('ld', e.lead, lead);
+    if (c.frN !== me.frags) { c.frN = me.frags; e.frags.textContent = me.frags; }
+    const ts = Math.max(0, Math.ceil(timeLeft)); if (c.tsN !== ts) { c.tsN = ts; e.timer.textContent = fmtTime(ts); }
+    if (c.bId !== bestId || c.bN !== best) { c.bId = bestId; c.bN = best; e.lead.textContent = nameOf(bestId) + ' ' + best; }
   }
   frame(dt, yaw) {
     if (this.pain > 0) {
@@ -58,7 +63,8 @@ export class Hud {
   feed(killer, weapon, victim, mine) {
     const f = this.el.feed, d = document.createElement('div');
     if (mine) d.className = 'me';
-    d.append(killer ? killer : '', Object.assign(document.createElement('em'), { textContent: killer ? weapon : 'fell' }), victim);
+    const em = Object.assign(document.createElement('em'), { textContent: killer ? weapon : 'died' });
+    if (killer) d.append(killer, em, victim); else d.append(victim, em);
     f.appendChild(d); while (f.children.length > 5) f.firstChild.remove();
     setTimeout(() => d.remove(), 6000);
   }
@@ -67,7 +73,7 @@ export class Hud {
     t.animate([{ opacity: 0, transform: 'translate(-50%,8px)' }, { opacity: 1, transform: 'translate(-50%,0)', offset: 0.1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }], { duration: 1600 });
   }
   center(text, sub = '') {
-    const k = text + '|' + sub; if (this.c.center === k) return; this.c.center = k;
+    if (this.c.ct === text && this.c.cs === sub) return; this.c.ct = text; this.c.cs = sub;
     this.el.center.textContent = text; if (sub) { const s = document.createElement('small'); s.textContent = sub; this.el.center.appendChild(s); }
   }
   fps(text) { this.txt('fps', this.el.fps, text); }

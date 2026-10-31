@@ -1,7 +1,7 @@
 // audio.js - WebAudio mixer for Doom DMX sound lumps. Local sounds are plain; world sounds go through HRTF/equal-power panners.
 // DMX lump: u16 format(3), u16 rate, u32 samples, then 16 pad bytes + 8-bit unsigned PCM + 16 pad bytes.
 const SOUNDS = ['PISTOL', 'SHOTGN', 'DSHTGN', 'SGCOCK', 'RLAUNC', 'RXPLOD', 'FIRSHT', 'FIRXPL', 'PLASMA', 'BFG', 'PLPAIN', 'PLDETH', 'PDIEHI',
-  'ITEMUP', 'WPNUP', 'GETPOW', 'ITMBK', 'OOF', 'JUMP', 'TELEPT', 'TINK', 'OUCH', 'NOWAY', 'DOROPN', 'DORCLS', 'SWTCHN', 'SWTCHX', 'STNMOV', 'SLOP'];
+  'ITEMUP', 'WPNUP', 'GETPOW', 'ITMBK', 'OOF', 'JUMP', 'TELEPT', 'TINK', 'OUCH', 'NOWAY', 'DOROPN', 'DORCLS', 'SWTCHN', 'SWTCHX', 'STNMOV', 'SLOP', 'PSTART', 'PSTOP'];
 const SCALE = 1 / 32;           // doom units -> audio "metres"
 const MAX_VOICES = 28, MAX_HRTF = 8, CULL = 2800;
 
@@ -18,14 +18,18 @@ export function decodeDmx(bytes) {
 
 export class GameAudio {
   constructor() { this.ctx = null; this.buffers = {}; this.voices = 0; this.hrtf = 0; this.volume = 0.7; this.ready = false; this.lastPlay = {}; }
-  // must be called from a user gesture
-  init(wad) {
+  // unlock() must be called from a user gesture (creates + resumes the context); load(wad) can follow later
+  unlock() {
     if (this.ctx) { this.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
     const ctx = this.ctx = new AC({ latencyHint: 'interactive' });
     this.master = ctx.createGain(); this.master.gain.value = this.volume;
     const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -12; comp.ratio.value = 4;
     this.master.connect(comp); comp.connect(ctx.destination);
+    this.resume();
+  }
+  load(wad) {
+    const ctx = this.ctx; if (!ctx || this.ready) return;
     for (const n of SOUNDS) {
       const lump = wad.lump('DS' + n); if (!lump) continue;
       const d = decodeDmx(lump); if (!d) continue;
@@ -39,7 +43,6 @@ export class GameAudio {
       this.buffers[n] = buf;
     }
     this.ready = true;
-    this.resume();
   }
   resume() { if (this.ctx && this.ctx.state !== 'running') this.ctx.resume().catch(() => {}); }
   setVolume(v) { this.volume = v; if (this.master) this.master.gain.value = v; }

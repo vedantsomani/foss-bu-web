@@ -7,7 +7,8 @@ import { WEAPONS, ITEMS, AMMO_MAX } from '../game/weapons.js';
 
 const STEP = 48, DIRS = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
 const INF = 65535, TAU = Math.PI * 2;
-const NAMES = ['Grunt', 'Reaper', 'Vex', 'Moth', 'Ripper', 'Havoc'];
+export const BOT_NAMES = ['Grunt', 'Reaper', 'Vex', 'Moth', 'Ripper', 'Havoc'];
+const NAMES = BOT_NAMES;
 const angDiff = (a, b) => { let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU; return d; };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
@@ -224,7 +225,7 @@ export class BotManager {
     // ---------- targets
     const en = b.enemy >= 0 ? w.players[b.enemy] : null;
     const engaged = en && en.alive && tick - b.seenAt <= 15;
-    let mx = 0, my = 0, aimYaw = b.yaw, aimPitch = 0, fire = 0, rate = 4 + 5 * sk;
+    let mx = 0, my = 0, aimYaw = b.yaw, aimPitch = 0, fire = 0;
     const wdef = WEAPONS[p.weapon];
     if (engaged) {
       let tx = en.x, ty = en.y, tz = en.z + 38;
@@ -244,7 +245,6 @@ export class BotManager {
       const tol = clamp(0.045 + 40 / (dist + 200) * 0.05 + (1 - sk) * 0.05, 0.04, 0.2);
       const rangeOk = wdef.kind === 'projectile' ? dist > (p.weapon === 5 ? 60 : 150) : dist < (wdef.range || 2000) * 0.7;
       if (tick >= b.acq && err < tol && rangeOk) fire = wdef.auto ? 1 : (tick & 1);
-      rate = 6 + 8 * sk;
     } else if (b.hunt || b.goalItem >= 0) {
       const field = b.hunt ? b.field : this.itemField(b.goalItem);
       const here = nav.nodeAt(p.x, p.y);
@@ -290,7 +290,6 @@ export class BotManager {
     out.yaw = b.yaw; out.pitch = b.pitch;
     out.buttons = (fire ? S.BTN.FIRE : 0) | (jump ? S.BTN.JUMP : 0) | (engaged && !(mx || my) ? 0 : S.BTN.SPRINT);
     out.weapon = b.wantW; if (b.wantW) b.wantW = p.wstate === 0 ? b.wantW : 0;
-    void rate;
     return out;
   }
 }

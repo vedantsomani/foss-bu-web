@@ -33,8 +33,8 @@ export class Input {
       if (!this.enabled) return;
       if (e.code === 'Tab') { e.preventDefault(); if (this.onScoreboard) this.onScoreboard(true); }
       if (e.repeat) { if (this.active && (e.code === 'Space' || e.code.startsWith('Arrow'))) e.preventDefault(); return; }
-      this.down[e.code] = true;
       if (!this.active) return;
+      this.down[e.code] = true;
       if (e.code === 'Space') { this.jumpLatch = true; e.preventDefault(); }
       else if (e.code === 'KeyE') this.useLatch = true;
       else if (e.code.startsWith('Digit')) { const n = +e.code.slice(5); if (n >= 1 && n <= 7) { this.wantWeapon = n; this.wantTicks = 24; } }
@@ -49,17 +49,23 @@ export class Input {
   }
   get active() { return this.enabled && (this.locked || this.forceActive); }
   releaseAll() { for (const k in this.down) this.down[k] = false; this.fireDown = false; }
-  // call inside a user gesture
-  async lock(fullscreen = true) {
-    try {
-      if (fullscreen && !document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
-    } catch { /* ignore */ }
-    try { if (navigator.keyboard && navigator.keyboard.lock && document.fullscreenElement) { navigator.keyboard.lock(['Escape']).then(() => { this.kbLock = true; }, () => {}); } } catch { /* ignore */ }
-    const c = this.canvas;
-    try {
-      const r = c.requestPointerLock({ unadjustedMovement: true });
-      if (r && r.catch) await r.catch(() => c.requestPointerLock());
-    } catch { try { c.requestPointerLock(); } catch { /* ignore */ } }
+  // call inside a user gesture. Pointer lock first: requestFullscreen consumes the transient activation that pointer lock needs.
+  lock(fullscreen = true) {
+    const de = document.documentElement, c = this.canvas;
+    // unadjustedMovement (raw mouse) is not available everywhere (e.g. Chrome on Linux). A rejected request burns the user
+    // activation, so remember the failure: the fallback then runs on the next click (the overlay is shown), not silently.
+    const plain = () => { try { const r = c.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch { /* ignore */ } };
+    if (this.noUnadj === undefined) this.noUnadj = /Linux/i.test(navigator.platform || '') && !/Android/i.test(navigator.userAgent || '');
+    if (this.noUnadj) plain();
+    else {
+      try {
+        const r = c.requestPointerLock({ unadjustedMovement: true });
+        if (r && r.catch) r.catch(e => { if (e && e.name === 'NotSupportedError') this.noUnadj = true; });
+      } catch { this.noUnadj = true; plain(); }
+    }
+    const kb = () => { if (navigator.keyboard && navigator.keyboard.lock && !this.kbLock) navigator.keyboard.lock(['Escape']).then(() => { this.kbLock = true; }, () => {}); };
+    if (fullscreen && !document.fullscreenElement && de.requestFullscreen) de.requestFullscreen({ navigationUI: 'hide' }).then(kb, () => {});
+    else if (document.fullscreenElement) kb();
   }
   unlock() { if (document.pointerLockElement) document.exitPointerLock(); }
   // fills out; me = predicted local player (for weapon cycling / sticky weapon requests)
@@ -84,5 +90,5 @@ export class Input {
     }
     return out;
   }
-  neutral(out) { out.fwd = out.side = out.pitch = out.buttons = out.weapon = 0; out.yaw = this.yaw; return out; }
+  neutral(out) { out.fwd = out.side = out.buttons = out.weapon = 0; out.yaw = this.yaw; out.pitch = this.pitch; return out; }
 }

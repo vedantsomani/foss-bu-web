@@ -11,7 +11,7 @@ import { pointInSector } from '../wad.js';
 import { BotManager } from './bots.js';
 
 const NEUTRAL = { fwd: 0, side: 0, yaw: 0, pitch: 0, buttons: 0, weapon: 0 };
-const LOCAL_ONLY = { fire: 1, jump: 1, land: 1, switch: 1 };
+const LOCAL_ONLY = { fire: 1, jump: 1, land: 1, switch: 1, teleport: 1 };   // the local player's own events come from prediction
 const lerp = (a, b, t) => a + (b - a) * t;
 
 // pickups exactly as the sim builds them (same order => same indices as the pickup bitmask)
@@ -38,7 +38,7 @@ class Base {
 export class HostSession extends Base {
   // transport: relay endpoint (uid 1) or null for a solo practice match. humans: remote uids already in the lobby.
   constructor({ map, transport = null, humans = [], bots = 0, skill = 0.55, seed = (Math.random() * 2 ** 31) | 0 }) {
-    super(map); this.kind = 'host'; this.myId = 1;
+    super(map); this.kind = 'host'; this.myId = 1; this.solo = !transport;
     const ep = transport || new MemoryNetwork().endpoint(1);
     const host = this.host = new GameHost({ map, endpoint: ep, seed, localId: 1, simOpts: { pointInSector: (x, y) => pointInSector(map, x, y) } });
     for (const id of humans) host.addPeer(id);
@@ -76,7 +76,7 @@ export class HostSession extends Base {
   get ready() { return true; }
   pause(v) { if (v === this.paused) return; this.paused = v; if (!v) this.host.last = null; }
   update(now) { if (!this.paused) this.host.update(now); }
-  alpha() { return this.paused ? 0 : Math.min(1, this.host.acc / TICK_MS); }
+  alpha() { return this.paused ? (this.lastAlpha || 0) : (this.lastAlpha = Math.min(1, this.host.acc / TICK_MS)); }
   projAge(now, alpha) { return alpha * S.DT; }
   pickupActive(i) { return this.host.world.pickups[i].active; }
   local(alpha) {
