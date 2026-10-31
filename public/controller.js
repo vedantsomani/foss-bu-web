@@ -60,6 +60,44 @@
     function rumble(pad, strong, weak, ms) {
         pad.vibrationActuator?.playEffect?.('dual-rumble', {duration: ms, strongMagnitude: strong, weakMagnitude: weak}).catch(() => {});
     }
+    const isNew = (buttons, n) => buttons.has(n) && !previous.has(n);
+    function menuActions() {
+        // One stop per option group: skip unselected segmented choices and settings tabs.
+        return Array.from(document.querySelectorAll('#panel button, #panel input, #panel select, #panel a[href], #click-play:not([hidden]) button'))
+            .filter(el => el.getClientRects().length && !el.disabled && !el.classList.contains('seg-source')
+                && !(el.matches('.seg-btn') && el.getAttribute('aria-checked') !== 'true')
+                && !(el.matches('[role=tab]') && el.getAttribute('aria-selected') !== 'true'));
+    }
+    function menuStep(buttons) {
+        const actions = menuActions();
+        const active = document.activeElement;
+        const direction = isNew(buttons, 13) ? 1 : isNew(buttons, 12) ? -1 : 0;
+        if (direction && actions.length) {
+            const index = actions.indexOf(active);
+            actions[(index + direction + actions.length) % actions.length].focus();
+        }
+        const side = isNew(buttons, 15) ? 1 : isNew(buttons, 14) ? -1 : 0;
+        if (side && active) {
+            const group = active.closest('.seg, .tabs');
+            const items = group ? Array.from(group.querySelectorAll('button')) : [];
+            if (items.length) {
+                const next = items[(items.indexOf(active) + side + items.length) % items.length];
+                next.click(); next.focus();
+            } else if (active.type === 'range') {
+                active.value = String(Number(active.value) + side * (Number(active.step) || 1));
+                active.dispatchEvent(new Event('input', {bubbles: true}));
+            }
+        }
+        if (isNew(buttons, 0)) {
+            const target = actions.includes(active) ? active : actions.find(el => el.tagName !== 'INPUT');
+            if (target?.type === 'text') target.focus(); else target?.click();
+        }
+        if (isNew(buttons, 1)) {
+            // B: back out of the current screen (also leaves a lobby or dismisses an error).
+            const back = document.querySelector('#panel .screen:not([hidden]) [data-home]');
+            if (back && back.getClientRects().length) back.click();
+        }
+    }
     function tick(now) {
         frame = null;
         const seconds = Math.min(0.05, (now - last) / 1000 || 1 / 60);
@@ -78,11 +116,12 @@
             release();
         } else {
             const buttons = new Set(pad.buttons.map((_, i) => pressed(pad, i) ? i : -1).filter(i => i >= 0));
-            if (document.body.classList.contains('playing') && window.fraglineNativePad) {
+            const inGame = document.body.classList.contains('playing') && document.getElementById('panel').hidden;
+            if (inGame && window.fraglineNativePad) {
                 // The engine reads the controller itself (analog sticks); only add rumble here.
                 if (held.size) { held.forEach(key => emit(key, false)); held.clear(); }
                 if (buttons.has(7) && !previous.has(7)) rumble(pad, 0.5, 0.4, 70);
-            } else if (document.body.classList.contains('playing')) {
+            } else if (inGame) {
                 const keys = gameKeys(pad, Number(deadzone.value));
                 for (const key of held) if (!keys.has(key)) emit(key, false);
                 for (const key of keys) if (!held.has(key)) emit(key, true);
@@ -98,18 +137,8 @@
                     }
                 }
             } else {
-                // Move between lobby actions; keyboard remains available for name/code entry.
-                const actions = Array.from(document.querySelectorAll('#panel button, #panel input, #panel select, #panel a[href], #click-play:not([hidden]) button'))
-                    .filter(el => el.getClientRects().length && !el.disabled);
-                const direction = buttons.has(13) && !previous.has(13) ? 1 : buttons.has(12) && !previous.has(12) ? -1 : 0;
-                if (direction && actions.length) {
-                    const index = actions.indexOf(document.activeElement);
-                    actions[(index + direction + actions.length) % actions.length].focus();
-                }
-                if (buttons.has(0) && !previous.has(0)) {
-                    const active = actions.includes(document.activeElement) ? document.activeElement : actions.find(el => el.tagName !== 'INPUT');
-                    active?.click();
-                }
+                // Menus: d-pad up/down moves, left/right changes the focused option, A selects, B goes back.
+                menuStep(buttons);
             }
             previous = buttons;
         }
