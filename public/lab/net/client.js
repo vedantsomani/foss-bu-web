@@ -1,6 +1,7 @@
 // client.js - prediction + reconciliation for the local player, interpolation for everyone else.
 import { createPredictWorld, runCommand, quantizeInput, DT, eyeOf, initialSectorState } from '../game/sim.js';
 import { clonePlayer } from '../game/playercodec.js';
+import { ITEMS } from '../game/weapons.js';
 import { MSG, TICK_MS, REDUNDANCY, Reader, Writer, encodeInputPacket, decodeSnapshot, unpackBit, SEC_STRIDE } from './protocol.js';
 import { Interpolator } from './interp.js';
 
@@ -10,6 +11,7 @@ export class GameClient {
     this.map = map; this.ep = endpoint; this.hostId = hostId; this.id = id; this.interpTicks = interpMs / TICK_MS;
     this.inputSource = inputSource; this.redundancy = redundancy;
     this.pw = createPredictWorld(map, pointInSector ? { pointInSector, rules } : { rules });
+    this.pickupCount = map.things.filter(t => ITEMS[t.type]).length;   // barrel bits follow the pickup bits
     // authoritative sector state (see protocol SEC_STRIDE tuples); pw heights follow it, extrapolated along the sent velocities
     this.secInit = initialSectorState(this.pw.prep); this.secStates = new Map(); this.secCur = this.secInit.slice(); this.moving = [];
     this.heights = { floors: this.pw.sectorFloor, ceils: this.pw.sectorCeil };
@@ -43,7 +45,13 @@ export class GameClient {
     const remote = {};
     for (const k in s.players) if (+k !== this.id) remote[k] = s.players[k];
     this.interp.push(s.tick, remote);
-    this.projectiles = s.projectiles; if (s.pickupBits) this.pickupBits = s.pickupBits;
+    this.projectiles = s.projectiles;
+    if (s.pickupBits) {
+      this.pickupBits = s.pickupBits;
+      // keep the prediction world's barrels in step so they block movement the same way as on the host
+      const off = this.pickupCount, bs = this.pw.barrels;
+      for (let j = 0; j < bs.length; j++) bs[j].st = unpackBit(s.pickupBits, off + j) ? 0 : 2;
+    }
     for (const e of s.events) if (e.tick > this.lastEventTick) this.events.push(e);
     this.lastEventTick = Math.max(this.lastEventTick, s.tick);
     // render clock: EMA of (server tick - local time in ticks)
@@ -135,6 +143,7 @@ export class GameClient {
     return { ...m, x: m.x + this.offsetX, y: m.y + this.offsetY, z: m.z + this.offsetZ, eyeZ: m.z + this.offsetZ + eyeOf(this.pw) + m.stepOff };
   }
   pickupActive(i) { return this.pickupBits ? !!unpackBit(this.pickupBits, i) : true; }
+  barrelStanding(j) { return this.pickupBits ? !!unpackBit(this.pickupBits, this.pickupCount + j) : true; }
   drainEvents() { const e = this.events; this.events = []; return e; }
   drainLocalEvents() { const e = this.localEvents; this.localEvents = []; return e; }
 }

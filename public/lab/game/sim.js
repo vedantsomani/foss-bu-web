@@ -253,6 +253,7 @@ export function createWorld(map, seed = 1, opts = {}) {
     if (!it) continue;
     world.pickups.push({ type: t.type, x: t.x, y: t.y, z: floorAt(prep, t.x, t.y, world.sectorFloor), active: true, timer: 0 });
   }
+  world.barrels = makeBarrels(map, prep, world.sectorFloor);
   return world;
 }
 // lightweight world used by clients for prediction (no combat effects, shares map prep)
@@ -262,6 +263,7 @@ export function createPredictWorld(map, opts = {}) {
   const world = { map, prep, tick: 0, rng: 1, players: {}, projectiles: [], pickups: [], events: [], auth: false, spawns: [], nextProj: 1, rules: getRules(opts.rules) };
   world.wpn = weaponTable(world.rules);
   initDynamics(world);
+  world.barrels = makeBarrels(map, prep, world.sectorFloor || null);
   return world;
 }
 // live sector heights + mover/switch state (kept on the world: several worlds may share one prepared map)
@@ -305,6 +307,47 @@ export function spawnPlayer(world, p) {
 // posFn(id) -> {x,y,z} gives (possibly rewound) player positions.
 // Floors and ceilings are tested per sector along the ray (split at every two-sided line it crosses), so a shot can leave
 // its own sector: aiming down off a ledge or up out of a pit is not stopped by the *origin* sector's floor/ceiling plane.
+// ---------------------------------------------------------------- exploding barrels (thing 2035)
+// As in Doom: 20 health, solid, shootable; after a short fuse they explode for 128 damage over 128 units,
+// set off other barrels in range, and the kill is credited to whoever set the barrel off.
+export const BARREL = 2035, BARREL_R = 10, BARREL_H = 42, BARREL_HP = 20, BARREL_FUSE = 17;   // fuse: Doom's 10 tics at 60 Hz
+export const BARREL_EVW = 7;   // weapon id used on the barrel's own explosion event (clients draw it as a barrel blast)
+function makeBarrels(map, prep, floors) {
+  const out = [];
+  for (const t of map.things) if (t.type === BARREL) out.push({ x: t.x, y: t.y, z: floorAt(prep, t.x, t.y, floors), hp: BARREL_HP, st: 0, fuse: 0, src: -1 });
+  return out;
+}
+export function damageBarrel(world, i, dmg, src) {
+  const b = world.barrels[i];
+  if (!b || b.st !== 0 || dmg <= 0) return;
+  b.hp -= dmg;
+  if (b.hp > 0) return;
+  b.st = 1; b.fuse = BARREL_FUSE; b.src = src;
+  world.events.push({ t: 'barrel', idx: i, x: b.x, y: b.y, z: b.z });
+}
+function updateBarrels(world) {
+  for (const b of world.barrels) {
+    if (b.st !== 1 || --b.fuse > 0) continue;
+    b.st = 2;
+    explode(world, { owner: b.src, w: 4, evw: BARREL_EVW }, b.x, b.y, b.z + 20, -1);
+  }
+}
+// Barrels are solid to players while they stand (both the authoritative and the prediction world do this).
+function pushFromBarrels(world, p) {
+  const bs = world.barrels;
+  if (!bs) return;
+  for (const b of bs) {
+    if (b.st !== 0 || p.z >= b.z + BARREL_H || p.z + HEIGHT <= b.z) continue;
+    const dx = p.x - b.x, dy = p.y - b.y, min = RADIUS + BARREL_R, d2 = dx * dx + dy * dy;
+    if (d2 >= min * min) continue;
+    const d = Math.sqrt(d2);
+    if (d < 1e-6) { p.x += min; continue; }
+    p.x = b.x + dx / d * min; p.y = b.y + dy / d * min;
+    const vn = (p.vx * dx + p.vy * dy) / d;
+    if (vn < 0) { p.vx -= vn * dx / d; p.vy -= vn * dy / d; }
+  }
+}
+
 const _rayX = [];
 export function traceRay(world, ox, oy, oz, dx, dy, dz, range, shooterId, posFn, extraR = 0, skipId = -1) {
   const prep = world.prep, F = world.sectorFloor, C = world.sectorCeil;
@@ -356,6 +399,25 @@ export function traceRay(world, ox, oy, oz, dx, dy, dz, range, shooterId, posFn,
     const lo = Math.max(s0, z0, 0), hi = Math.min(s1, z1);
     if (lo <= hi && lo < best) { best = lo; kind = 'player'; target = id; }
   }
+  // standing barrels (vertical cylinders)
+  const bs = world.barrels;
+  if (bs) for (let i = 0; i < bs.length; i++) {
+    const b = bs[i];
+    if (b.st !== 0) continue;
+    const BR = BARREL_R + extraR, hl2 = dx * dx + dy * dy, px = ox - b.x, py = oy - b.y;
+    let s0, s1;
+    if (hl2 < 1e-12) { if (px * px + py * py > BR * BR) continue; s0 = 0; s1 = Infinity; }
+    else {
+      const bb = 2 * (dx * px + dy * py), c = px * px + py * py - BR * BR, disc = bb * bb - 4 * hl2 * c;
+      if (disc < 0) continue;
+      const sq = Math.sqrt(disc); s0 = (-bb - sq) / (2 * hl2); s1 = (-bb + sq) / (2 * hl2);
+    }
+    let z0, z1;
+    if (Math.abs(dz) < 1e-9) { if (oz < b.z || oz > b.z + BARREL_H) continue; z0 = -Infinity; z1 = Infinity; }
+    else { z0 = (b.z - oz) / dz; z1 = (b.z + BARREL_H - oz) / dz; if (z0 > z1) { const t = z0; z0 = z1; z1 = t; } }
+    const lo = Math.max(s0, z0, 0), hi = Math.min(s1, z1);
+    if (lo <= hi && lo < best) { best = lo; kind = 'barrel'; target = i; }
+  }
   return { s: best, kind, target, x: ox + dx * best, y: oy + dy * best, z: oz + dz * best };
 }
 
@@ -394,8 +456,16 @@ function splashReaches(world, x, y, z, pl) {
 }
 function explode(world, proj, x, y, z, directTarget) {
   const def = world.wpn[proj.w].proj, hk = world.rules.horizontalKnock;
-  world.events.push({ t: 'explode', x, y, z, w: proj.w });
+  world.events.push({ t: 'explode', x, y, z, w: proj.evw ?? proj.w });
   if (def.splash <= 0) return;
+  // other barrels in range catch the blast (they explode after their own fuse: chain reactions)
+  if (world.barrels) for (let i = 0; i < world.barrels.length; i++) {
+    const b = world.barrels[i];
+    if (b.st !== 0) continue;
+    const d = Math.max(0, Math.hypot(x - b.x, y - b.y, z - (b.z + BARREL_H / 2)) - BARREL_R);
+    if (d >= def.splashRadius || !splashReaches(world, x, y, z, b)) continue;
+    damageBarrel(world, i, Math.floor(def.splash * (1 - d / def.splashRadius)), proj.owner);
+  }
   for (const id of sortedIds(world)) {
     const pl = world.players[id];
     if (!pl.alive) continue;
@@ -471,6 +541,21 @@ function autoAim(world, p, ox, oy, oz, yaw, range, posFn) {
     if (r.kind !== 'player' || r.target !== id) continue;
     bestA = Math.abs(da); _aim.found = true; _aim.dyaw = da; _aim.pitch = pitch;
   }
+  // Doom's autoaim also locks onto shootable things such as barrels: a level shot would pass over a 42-unit barrel.
+  const bs = world.barrels;
+  if (bs) for (let j = 0; j < bs.length; j++) {
+    const b = bs[j];
+    if (b.st !== 0) continue;
+    const dx = b.x - ox, dy = b.y - oy, dist = Math.hypot(dx, dy);
+    if (dist < 1 || dist > range) continue;
+    let da = Math.atan2(dy, dx) - yaw; da = Math.atan2(Math.sin(da), Math.cos(da));
+    if (Math.abs(da) > 0.0982 || Math.abs(da) >= bestA) continue;
+    const tz = b.z + BARREL_H * 0.5 - oz, pitch = Math.atan2(tz, dist);
+    if (Math.abs(pitch) > 0.56) continue;
+    const l = Math.hypot(dist, tz), r = traceRay(world, ox, oy, oz, dx / l, dy / l, tz / l, l + 1, p.id, posFn);
+    if (r.kind !== 'barrel' || r.target !== j) continue;
+    bestA = Math.abs(da); _aim.found = true; _aim.dyaw = da; _aim.pitch = pitch;
+  }
   return _aim;
 }
 
@@ -504,6 +589,9 @@ function shoot(world, p, inp, d, opts) {
         const dmg = rollDmg(world, d.dmg), tg = world.players[r.target];
         const taken = damagePlayer(world, tg, dmg, p.id, d.id);
         world.events.push({ t: 'hit', p: p.id, target: r.target, dmg: taken, x: r.x, y: r.y, z: r.z, w: d.id });
+      } else if (r.kind === 'barrel') {
+        damageBarrel(world, r.target, rollDmg(world, d.dmg), p.id);
+        world.events.push({ t: 'impact', x: r.x - dx * 0.5, y: r.y - dy * 0.5, z: r.z - dz * 0.5, w: d.id });
       } else if (r.kind === 'wall') world.events.push({ t: 'impact', x: r.x - dx * 0.5, y: r.y - dy * 0.5, z: r.z - dz * 0.5, w: d.id });
     } else {
       const pd = d.proj;
@@ -513,7 +601,7 @@ function shoot(world, p, inp, d, opts) {
       const r = traceRay(world, ox, oy, oz, dx, dy, dz, 12, p.id, null, 0, -2);
       const pr = { id: world.nextProj++, owner: p.id, w: d.id, x: ox + dx * 12, y: oy + dy * 12, z: sz + dz * 12,
         vx: dx * pd.speed, vy: dy * pd.speed, vz: dz * pd.speed, ttl: pd.ttl, dmg: rollDmg(world, pd.dmg) };
-      if (r.kind === 'wall') { pr.x = r.x - dx * 2; pr.y = r.y - dy * 2; pr.z = r.z - dz * 2; explode(world, pr, pr.x, pr.y, pr.z, -1); }
+      if (r.kind === 'wall' || r.kind === 'barrel') { if (r.kind === 'barrel') damageBarrel(world, r.target, pr.dmg, p.id); pr.x = r.x - dx * 2; pr.y = r.y - dy * 2; pr.z = r.z - dz * 2; explode(world, pr, pr.x, pr.y, pr.z, -1); }
       else if (r.kind === 'sky') { /* fired into a sky ceiling: it just flies away */ }
       else world.projectiles.push(pr);
     }
@@ -540,7 +628,7 @@ function updateProjectiles(world, dt) {
       const tg = world.players[r.target];
       const taken = damagePlayer(world, tg, pr.dmg, pr.owner, pr.w);
       world.events.push({ t: 'hit', p: pr.owner, target: r.target, dmg: taken, x: r.x, y: r.y, z: r.z, w: pr.w });
-    }
+    } else if (r.kind === 'barrel') damageBarrel(world, r.target, pr.dmg, pr.owner);
     explode(world, pr, ex, ey, ez, r.target);
   }
   world.projectiles = keep;
@@ -928,6 +1016,7 @@ export function runCommand(world, p, raw, dt, opts) {
   if (p.alive) {
     const x0 = p.x, y0 = p.y;
     moveCommand(world.prep, p, inp, dt, world.events, world);
+    pushFromBarrels(world, p);
     if (world.prep.hasSpecials) checkCross(world, p, x0, y0);
     if (world.auth && (inp.buttons & BTN.USE) && !(p.lastButtons & BTN.USE)) usePlayer(world, p);
     weaponCommand(world, p, inp, opts);
@@ -958,6 +1047,7 @@ export function step(world, inputsByPlayer, dt = DT, opts = null) {
   }
   if (world.auth) updateMovers(world);
   updateProjectiles(world, dt);
+  if (world.auth && world.barrels) updateBarrels(world);
   updatePickups(world);
   world.tick++;
   return world;
@@ -982,6 +1072,8 @@ export function serialize(world) {
   for (const m of world.movers) { w.u8(m.k); w.u16(m.s); w.i8(m.st); w.i8(m.o); w.u8(m.f); w.u16(m.g); w.f32(m.spd); w.f32(m.a); w.f32(m.b); w.u16(m.t); w.u16(m.w); }
   for (const arr of [world.lineDone, world.switchedLines]) { const l = []; for (let i = 0; i < arr.length; i++) if (arr[i]) l.push(i); w.u16(l.length); for (const i of l) w.u16(i); }
   w.u16(world.buttons.length); for (const b of world.buttons) { w.u16(b.li); w.u16(b.t); }
+  w.u16(world.barrels.length);
+  for (const b of world.barrels) { w.u8(b.st); w.i16(Math.max(-32768, b.hp)); w.u8(b.fuse); w.u8(b.src < 0 ? 255 : b.src); }
   return w.bytes();
 }
 export function deserialize(bytes, map, opts = {}) {
@@ -1000,6 +1092,11 @@ export function deserialize(bytes, map, opts = {}) {
   for (let i = 0; i < nm; i++) world.movers.push({ k: r.u8(), s: r.u16(), st: r.i8(), o: r.i8(), f: r.u8(), g: r.u16(), spd: r.f32(), a: r.f32(), b: r.f32(), t: r.u16(), w: r.u16() });
   for (const arr of [world.lineDone, world.switchedLines]) { const n = r.u16(); for (let i = 0; i < n; i++) arr[r.u16()] = 1; }
   const nb = r.u16(); for (let i = 0; i < nb; i++) world.buttons.push({ li: r.u16(), t: r.u16() });
+  const nbar = r.u16();
+  for (let i = 0; i < nbar; i++) {
+    const st = r.u8(), hp = r.i16(), fuse = r.u8(), src = r.u8(), b = world.barrels[i];
+    if (b) { b.st = st; b.hp = hp; b.fuse = fuse; b.src = src === 255 ? -1 : src; }
+  }
   return world;
 }
 export function hashWorld(world) {

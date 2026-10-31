@@ -15,6 +15,12 @@ const LOCAL_ONLY = { fire: 1, jump: 1, land: 1, switch: 1, teleport: 1 };   // t
 const lerp = (a, b, t) => a + (b - a) * t;
 
 // pickups exactly as the sim builds them (same order => same indices as the pickup bitmask)
+// exploding barrels in map order (index j = the sim's world.barrels[j])
+export function makeBarrels(map) {
+  const prep = S.prepareMap(map), out = [];
+  for (const t of map.things) if (t.type === S.BARREL) out.push({ x: t.x, y: t.y, z: S.floorAt(prep, t.x, t.y) });
+  return out;
+}
 export function makePickups(map) {
   const prep = S.prepareMap(map), out = [];
   for (const t of map.things) if (ITEMS[t.type]) out.push({ type: t.type, x: t.x, y: t.y, z: S.floorAt(prep, t.x, t.y) });
@@ -27,7 +33,7 @@ function fillState(out, p) {
 }
 
 class Base {
-  constructor(map) { this.map = map; this.pickups = makePickups(map); this.lv = {}; this.rv = {}; this.myId = 1; this.sampler = null; this.sOut = { fwd: 0, side: 0, yaw: 0, pitch: 0, buttons: 0, weapon: 0 }; }
+  constructor(map) { this.map = map; this.pickups = makePickups(map); this.barrels = makeBarrels(map); this.lv = {}; this.rv = {}; this.myId = 1; this.sampler = null; this.sOut = { fwd: 0, side: 0, yaw: 0, pitch: 0, buttons: 0, weapon: 0 }; }
   get world() { return this.host ? this.host.world : this.client.pw; }
   // Render-ready missiles: [{id,w,x,y,z,vx,vy,vz,own}], positions shown at the same instant as interpolated players and never drawn
   // through geometry (a missile that is about to hit stops at the surface; the explosion event follows).
@@ -101,6 +107,7 @@ export class HostSession extends Base {
   alpha() { return this.paused ? (this.lastAlpha || 0) : (this.lastAlpha = Math.min(1, this.host.acc / TICK_MS)); }
   projAge(now, alpha) { return (alpha - 1) * S.DT; }   // players are drawn one tick behind the sim (interpolated): so are missiles
   pickupActive(i) { return this.host.world.pickups[i].active; }
+  barrelStanding(j) { return this.host.world.barrels[j].st === 0; }
   local(alpha) {
     const p = this.host.world.players[1], c = this.pc[1]; if (!p) return null;
     const o = fillState(this.lv, p);
@@ -162,6 +169,7 @@ export class ClientSession extends Base {
   alpha() { return Math.min(1, this.client.acc / TICK_MS); }
   projAge(now) { return Math.min(0.12, (now - this.projT) / 1000); }
   pickupActive(i) { return this.client.pickupActive(i); }
+  barrelStanding(j) { return this.client.barrelStanding(j); }
   local(alpha) {
     const m = this.client.me, a = this.prevV, b = this.curV; if (!m || !a) return null;
     const o = fillState(this.lv, m);

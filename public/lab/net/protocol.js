@@ -30,7 +30,7 @@ export function decodeInputPacket(r) {
 }
 
 // ---- events
-const EV = { fire: 1, hit: 2, kill: 3, pickup: 4, explode: 5, impact: 6, spawn: 7, jump: 8, land: 9, switch: 10, respawnitem: 11, teleport: 12, mover: 13 };
+const EV = { fire: 1, hit: 2, kill: 3, pickup: 4, explode: 5, impact: 6, spawn: 7, jump: 8, land: 9, switch: 10, respawnitem: 11, teleport: 12, mover: 13, barrel: 14 };
 const EVN = Object.fromEntries(Object.entries(EV).map(([k, v]) => [v, k]));
 const u8 = v => (v === undefined || v < 0 ? 255 : v & 255);
 const i16 = v => Math.max(-32768, Math.min(32767, Math.round(v || 0)));
@@ -46,7 +46,7 @@ export function writeEvent(w, e, snapTick, evTick) {
     case 'spawn': case 'jump': a = u8(e.p); break;
     case 'land': a = u8(e.p); c = Math.min(65535, e.v | 0); break;
     case 'switch': a = u8(e.p); b = u8(e.w); break;
-    case 'respawnitem': c = e.idx; break;
+    case 'respawnitem': case 'barrel': c = e.idx; break;
     case 'teleport': a = u8(e.p); b = e.out ? 1 : 0; c = (e.yaw | 0) & 0xffff; break;
     case 'mover': b = e.a & 255; c = e.s; break;
   }
@@ -65,7 +65,7 @@ export function readEvent(r, snapTick) {
     case 'spawn': case 'jump': e.p = id(a); break;
     case 'land': e.p = id(a); e.v = c; break;
     case 'switch': e.p = id(a); e.w = b; break;
-    case 'respawnitem': e.idx = c; break;
+    case 'respawnitem': case 'barrel': e.idx = c; break;
     case 'teleport': e.p = id(a); e.out = !!b; e.yaw = c; break;
     case 'mover': e.a = b; e.s = c; break;
   }

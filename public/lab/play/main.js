@@ -166,7 +166,8 @@ $('bLeave').onclick = leave; $('bOverLeave').onclick = leave;
 
 function beginMatch({ session, map, wad, sprites, mapName, timeLimit, needClick }) {
   const q = QUALITY[settings.quality];
-  const renderMap = { ...map, things: map.things.filter(t => !ITEMS[t.type]) };   // pickups are drawn as entities (they come and go)
+  // pickups and barrels are drawn as entities (they come and go)
+  const renderMap = { ...map, things: map.things.filter(t => !ITEMS[t.type] && t.type !== 2035) };
   const renderer = createRenderer(glCanvas, wad, renderMap, { renderScale: q.renderScale, bloom: q.bloom, maxLights: q.maxLights, dpr: q.dpr, fov: settings.fov });
   const dyn = new DynRes(scale => applyQuality(scale)); dyn.enabled = settings.dynRes;
   const pk = session.pickups;
@@ -174,6 +175,7 @@ function beginMatch({ session, map, wad, sprites, mapName, timeLimit, needClick 
     session, map, wad, renderer, sprites, mapName, dyn, timeLimit, myId: session.myId, names: session.names,
     vm: VM.createViewModel(), vmCtx: { speed: 0, grounded: true, sprint: false, lookDX: 0, lookDY: 0, weapon: 0, wstate: 0, wtimer: 0, events: [], player: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, eyeZ: 0 }, stepOff: 0 },
     ents: [], pickupEnts: pk.map((p, i) => { const d = PICKUP_SPRITES[p.type]; return { id: 'k' + i, x: p.x, y: p.y, z: p.z, base: p.z, sprite: d[0] + 'A0', fullbright: d[2] ? 1 : 0 }; }),
+    barrelEnts: session.barrels.map((b, j) => ({ id: 'b' + j, x: b.x, y: b.y, z: b.z, sprite: 'BAR1A0', fullbright: 0 })), barrelBoom: session.barrels.map(() => -1),
     pEnt: {}, anim: {}, projEnts: [], projLights: new Map(), fx: Array.from({ length: 48 }, (_, i) => ({ on: false, def: null, t0: 0, ent: { id: 'f' + i, x: 0, y: 0, z: 0, sprite: '', fullbright: 1 } })), fxN: 0,
     lastRender: 0, lastNow: 0, frames: 0, fpsT: 0, fpsN: 0, fps: 0, fpsText: '', yawSet: false, lastYaw: 0, lastPitch: 0, wasAlive: true, killer: '', over: false, closed: false,
     remotes: {}, L: null, jsMs: 0, menuAt: 0, paused: false, started: performance.now(), shown: false, deadAt: 0,
@@ -240,7 +242,13 @@ function onEvent(e, local) {
     case 'jump': if (local) { G.vmCtx.events.push(e); audio.play('JUMP', undefined, undefined, undefined, 0.5); } else { const r = G.remotes[e.p]; if (r) audio.play('JUMP', r.x, r.y, r.z, 0.7); } break;
     case 'land': if (local) { G.vmCtx.events.push(e); audio.play('OOF', undefined, undefined, undefined, Math.min(0.7, e.v / 900)); } else { const r = G.remotes[e.p]; if (r) audio.play('OOF', r.x, r.y, r.z, 0.5); } break;
     case 'switch': if (local) { G.vmCtx.events.push(e); audio.play('WPNUP', undefined, undefined, undefined, 0.35); } break;
+    case 'barrel': if (G.barrelBoom[e.idx] !== undefined) G.barrelBoom[e.idx] = now; break;   // fuse lit: BEXP animation starts
     case 'explode': {
+      if (e.w === 7) {   // a barrel going off: its own sprite animation is already playing
+        light(e.x, e.y, e.z, 360, [1, 0.6, 0.2], 2.4, 0.4);
+        audio.play('BAREXP', e.x, e.y, e.z, 1);
+        break;
+      }
       const k = e.w === 5 ? FX.plasma : e.w === 6 ? FX.bfg : FX.rocket;
       spawnFx(k, e.x, e.y, e.z, G.lastNow / 1000);
       light(e.x, e.y, e.z, e.w === 5 ? 200 : 360, e.w === 6 ? [0.4, 1, 0.5] : e.w === 5 ? [0.4, 0.55, 1] : [1, 0.6, 0.2], e.w === 5 ? 1.4 : 2.4, e.w === 5 ? 0.18 : 0.4);
@@ -378,6 +386,15 @@ function frame(now) {
   const ents = g.ents; ents.length = 0;
   const pickups = s.pickups;
   for (let i = 0; i < pickups.length; i++) if (s.pickupActive(i)) { const e = g.pickupEnts[i]; e.z = e.base + 3 + Math.sin(t * 2.2 + i) * 2; ents.push(e); }
+  // barrels: BAR1 A/B while standing; BEXP A..E (Doom's 5,5,5,10,10 tics) once set off
+  for (let j = 0; j < g.barrelEnts.length; j++) {
+    const e = g.barrelEnts[j], t0 = g.barrelBoom[j];
+    if (s.barrelStanding(j)) { g.barrelBoom[j] = -1; e.sprite = (Math.floor(t * 35 / 6) & 1) ? 'BAR1B0' : 'BAR1A0'; e.fullbright = 0; ents.push(e); continue; }
+    if (t0 < 0) continue;
+    const tic = (t - t0) * 35;
+    if (tic >= 35) continue;
+    e.sprite = 'BEXP' + 'ABCDE'[tic < 5 ? 0 : tic < 10 ? 1 : tic < 15 ? 2 : tic < 25 ? 3 : 4] + '0'; e.fullbright = tic >= 10 ? 1 : 0; ents.push(e);
+  }
   for (const id in rv) {
     const p = rv[id], an = animOf(id);
     let e = g.pEnt[id]; if (!e) e = g.pEnt[id] = { id: 'p' + id, x: 0, y: 0, z: 0, angle: 0, sprite: 'PLAYA1', fullbright: 0, rotate: true };

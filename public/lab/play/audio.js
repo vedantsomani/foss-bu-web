@@ -1,6 +1,6 @@
 // audio.js - WebAudio mixer for Doom DMX sound lumps. Local sounds are plain; world sounds go through HRTF/equal-power panners.
 // DMX lump: u16 format(3), u16 rate, u32 samples, then 16 pad bytes + 8-bit unsigned PCM + 16 pad bytes.
-const SOUNDS = ['PISTOL', 'SHOTGN', 'DSHTGN', 'SGCOCK', 'RLAUNC', 'RXPLOD', 'FIRSHT', 'FIRXPL', 'PLASMA', 'BFG', 'PLPAIN', 'PLDETH', 'PDIEHI',
+const SOUNDS = ['BAREXP', 'PISTOL', 'SHOTGN', 'DSHTGN', 'SGCOCK', 'RLAUNC', 'RXPLOD', 'FIRSHT', 'FIRXPL', 'PLASMA', 'BFG', 'PLPAIN', 'PLDETH', 'PDIEHI',
   'ITEMUP', 'WPNUP', 'GETPOW', 'ITMBK', 'OOF', 'JUMP', 'TELEPT', 'TINK', 'OUCH', 'NOWAY', 'DOROPN', 'DORCLS', 'SWTCHN', 'SWTCHX', 'STNMOV', 'SLOP', 'PSTART', 'PSTOP'];
 const SCALE = 1 / 32;           // doom units -> audio "metres"
 const MAX_VOICES = 28, MAX_HRTF = 8, CULL = 2800;

@@ -137,7 +137,8 @@ export class GameHost {
     const base = peer.ackSnap && peer.sent.get(peer.ackSnap) ? peer.sent.get(peer.ackSnap) : null;
     const players = {};
     for (const id in w.players) players[id] = clonePlayer(w.players[id]);
-    const bits = packBits(w.pickups.map(p => p.active));
+    // pickups first, then standing barrels (same bitmask: barrel j is bit pickups.length + j)
+    const bits = packBits(w.pickups.map(p => p.active).concat(w.barrels.map(b => b.st === 0)));
     const changed = !base || base.bits.length !== bits.length || base.bits.some((b, i) => b !== bits[i]);
     const events = this.evlog.filter(x => x.tick > peer.prevSnapTick);
     const sec = this.currentSectors(), switched = [];
