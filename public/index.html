@@ -16,8 +16,6 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="style.css?v=2.0.0">
-  <link rel="preload" href="websockets-doom.wasm.gz?v=2.0.0" as="fetch" crossorigin>
-  <link rel="preload" href="freedm.wad.gz?v=2.0.0" as="fetch" crossorigin>
 </head>
 <body>
   <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
@@ -74,7 +72,7 @@
             <form id="join-form" class="join" novalidate>
               <label class="mini-label" for="room-code">Got an invite? Enter the room code</label>
               <div class="join-box">
-                <input id="room-code" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ROOM CODE" aria-describedby="room-error">
+                <input id="room-code" maxlength="120" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ROOM CODE" aria-describedby="room-error">
                 <button class="btn" type="submit">Join</button>
               </div>
             </form>

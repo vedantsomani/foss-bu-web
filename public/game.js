@@ -31,6 +31,7 @@
         'set-graphics': 'ultra', 'set-fps': '0', 'set-hud': 'minimal', 'set-crosshair': true, 'set-showfps': false,
         'set-sens': '5', 'set-look': '5', 'set-invert': false, 'set-autorun': true,
         'set-sound': true, 'set-volume': '10', 'set-fullscreen': true,
+        'controller-enabled': true, 'controller-deadzone': '0.25',
     };
 
     const $ = id => document.getElementById(id);
@@ -43,7 +44,7 @@
     };
     const debug = new URLSearchParams(location.search).has('debug');
 
-    const state = {room: null, host: false, started: false, running: false, poll: null, back: 'home'};
+    const state = {room: null, host: false, started: false, running: false, poll: null, token: 0};
 
     // ---------- Screens and messages ----------
 
@@ -137,6 +138,8 @@
     function engineConfigs() {
         const preset = PRESETS[setting('set-graphics')] || PRESETS.ultra;
         const fps = Number(setting('set-fps'));
+        const pad = setting('controller-enabled') ? 1 : 0;
+        const zone = Math.round(Number(setting('controller-deadzone')) * 100) || 25;
         const vanilla = {
             mouse_sensitivity: setting('set-sens'), sfx_volume: setting('set-volume'), music_volume: 0, show_messages: 1,
             // Modern layout: WASD, arrows turn, Ctrl/click fire, E use, Alt strafe, Shift run.
@@ -145,7 +148,7 @@
             use_mouse: 1, mouseb_fire: 0, mouseb_strafe: -1, mouseb_forward: -1,
             mouse_sensitivity_y: setting('set-look'),
             // Controller (Crispy's native analog gamepad support): see joystick_physical_button* below.
-            use_joystick: 1, joyb_fire: 0, joyb_strafe: -1, joyb_use: 2, joyb_jump: 1, joyb_speed: setting('set-autorun') ? 29 : 3,
+            use_joystick: pad, joyb_fire: 0, joyb_strafe: -1, joyb_use: 2, joyb_jump: 1, joyb_speed: setting('set-autorun') ? 29 : 3,
             screenblocks: setting('set-hud') === 'classic' ? 10 : 15, detaillevel: 0, // 15: Crispy HUD at the screen edges
             snd_channels: 16, snd_musicdevice: 0, snd_sfxdevice: 3, usegamma: 0,
         };
@@ -154,9 +157,9 @@
             grabmouse: 1, novert: 1, mouse_y_invert: setting('set-invert') ? 1 : 0,
             // Sticks: left moves/strafes, right turns/looks (analog). Virtual buttons 0-7 map to
             // RT, A, X, L3, LB, RB, Start, View (SDL button ids; 22 is the right trigger).
-            use_gamepad: 1, use_analog: 1, joystick_index: 0,
+            use_gamepad: pad, use_analog: 1, joystick_index: 0,
             joystick_x_axis: 2, joystick_y_axis: 1, joystick_strafe_axis: 0, joystick_look_axis: 3,
-            joystick_x_dead_zone: 15, joystick_y_dead_zone: 15, joystick_strafe_dead_zone: 15, joystick_look_dead_zone: 15,
+            joystick_x_dead_zone: zone, joystick_y_dead_zone: zone, joystick_strafe_dead_zone: zone, joystick_look_dead_zone: zone,
             joystick_turn_sensitivity: 12, joystick_move_sensitivity: 10, joystick_look_sensitivity: 12,
             joyb_prevweapon: 4, joyb_nextweapon: 5, joyb_menu_activate: 6, joyb_toggle_automap: 7,
             joystick_physical_button0: 22, joystick_physical_button1: 0, joystick_physical_button2: 2,
@@ -261,9 +264,10 @@
         return args.concat(extra);
     }
 
-    async function launch(args) {
+    async function launch(args, token = state.token) {
         if (state.running) return;
         await engineReady;
+        if (token !== state.token) return; // the player left the lobby while the engine was still loading
         state.running = true;
         for (const [name, text] of Object.entries(engineConfigs())) Module.FS.writeFile(`/${name}`, text);
         document.body.classList.add('playing');
@@ -427,13 +431,14 @@
     }
 
     async function createRoom() {
-        const button = $('create-room');
+        const button = $('create-room'), token = state.token;
         button.disabled = true;
         enterImmersive();
         try {
             const players = $('match-players').value;
             const {ok, data} = await api(`newroom?players=${players}`);
             if (!ok || !data.room) throw new Error(data.error || 'The room service is unavailable.');
+            if (token !== state.token) return;
             state.room = data.room;
             state.host = true;
             showLobby(data.maxPlayers);
@@ -441,7 +446,7 @@
             const args = ['-server', '-privateserver', '-nodes', String(data.maxPlayers), '-dup', '1',
                 '-wss', `${wsRelay}/api/ws/${state.room}`].concat(matchArgs());
             if (time !== '0') args.push('-timer', time);
-            await launch(engineArgs(args));
+            await launch(engineArgs(args), token);
         } catch (error) {
             fail('Could not create a room', error.message);
         } finally {
@@ -454,9 +459,11 @@
         enterImmersive();
         $('wait-title').textContent = 'Starting practice…';
         show('wait');
+        const token = state.token;
         await engineReady;
+        if (token !== state.token) return;
         enterMatch();
-        await launch(engineArgs(matchArgs()));
+        await launch(engineArgs(matchArgs()), token);
     }
 
     async function checkRoom(code) {
@@ -482,15 +489,29 @@
         $('player-name').value = $('join-name').value;
         state.host = false;
         showLobby();
-        await launch(engineArgs(['-connect', '1', '-dup', '1', '-wss', `${wsRelay}/api/ws/${state.room}`]));
+        const token = state.token;
+        await launch(engineArgs(['-connect', '1', '-dup', '1', '-wss', `${wsRelay}/api/ws/${state.room}`]), token);
+    }
+
+    function goHome() {
+        window.removeEventListener('beforeunload', confirmLeave);
+        if (state.running) { location.href = '/'; return; }
+        state.token++;
+        state.room = null;
+        stopPolling();
+        exitImmersive();
+        history.replaceState(null, '', '/');
+        show('home');
     }
 
     function goToCode() {
-        const code = $('room-code').value.trim().toLowerCase();
+        // Accept a pasted invite link as well as the bare code.
+        const code = ($('room-code').value.trim().split(/[?#]/)[0].split('/').filter(Boolean).pop() || '').toLowerCase();
         if (!CODE.test(code)) {
             $('room-error').textContent = 'Enter the 8-character room code.';
             return;
         }
+        $('room-error').textContent = '';
         history.pushState(null, '', `/${code}`);
         checkRoom(code);
     }
@@ -736,10 +757,11 @@
         parallax();
         renderProgress();
         $('new-match').addEventListener('click', () => show('create'));
-        $('open-settings').addEventListener('click', () => { state.back = 'home'; show('settings'); });
+        $('open-settings').addEventListener('click', () => show('settings'));
         $('open-help').addEventListener('click', () => show('help'));
         $('create-room').addEventListener('click', createRoom);
         $('practice').addEventListener('click', practice);
+        $('room-code').addEventListener('input', () => { $('room-error').textContent = ''; });
         $('join-form').addEventListener('submit', event => { event.preventDefault(); goToCode(); });
         $('join-room').addEventListener('click', joinRoom);
         $('copy-link').addEventListener('click', copyLink);
@@ -749,7 +771,7 @@
             $('share-link').addEventListener('click', () => navigator.share({title: 'Join my Fragline match', url: $('lobby-link').value}).catch(() => {}));
         }
         for (const button of document.querySelectorAll('[data-home]')) {
-            button.addEventListener('click', () => { if (state.running) location.href = '/'; else { history.replaceState(null, '', '/'); show('home'); } });
+            button.addEventListener('click', goHome);
         }
         $('fullscreen').addEventListener('click', toggleFullscreen);
         $('canvas').addEventListener('click', () => { $('canvas').focus({preventScroll: true}); if (state.started) capturePointer(); });

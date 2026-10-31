@@ -130,6 +130,24 @@ export class Nav {
     }
     return best;
   }
+  // node a bot can actually walk to the item from (a node merely *near* an item may sit behind a wall or under a ledge), or -1
+  itemNode(pk) {
+    const gx = Math.round((pk.x - this.minX) / STEP), gy = Math.round((pk.y - this.minY) / STEP), cand = [];
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+      const cx = gx + ox, cy = gy + oy; if (cx < 0 || cy < 0 || cx >= this.gw || cy >= this.gh) continue;
+      const n = cy * this.gw + cx; if (!this.valid[n] || !this.edges[n] && this.count > 1) continue;
+      cand.push([(this.minX + cx * STEP - pk.x) ** 2 + (this.minY + cy * STEP - pk.y) ** 2, n]);
+    }
+    cand.sort((a, b) => a[0] - b[0]);
+    const probe = { x: 0, y: 0, z: 0, vx: 0, vy: 0 };
+    for (const [, n] of cand) {
+      if (pk.z - this.floor[n] > S.STEP_MAX) continue;
+      probe.x = this.cx(n); probe.y = this.cy(n); probe.z = this.floor[n]; probe.vx = probe.vy = 0;
+      S.moveCircle(this.prep, probe, pk.x - probe.x, pk.y - probe.y);
+      if (Math.hypot(probe.x - pk.x, probe.y - pk.y) < 4) return n;
+    }
+    return -1;
+  }
   cx(n) { return this.minX + (n % this.gw) * STEP; }
   cy(n) { return this.minY + Math.floor(n / this.gw) * STEP; }
   // BFS over reversed edges: out[n] = number of steps from n to goal
@@ -196,12 +214,12 @@ export class BotManager {
     this.names[id] = name;
     this.bots.push({ id, peer, yaw: 0, pitch: 0, goalItem: -1, field: new Uint16Array(this.nav.N), fieldFor: -2, fieldT: -1e9,
       enemy: -1, seenAt: -1e9, lastSeen: { x: 0, y: 0 }, noiseYaw: 0, noisePitch: 0, noiseT: 0, strafe: 1, strafeT: 0,
-      escT: 0, escNode: -1, stuckT: 0, lastX: 0, lastY: 0, unstick: 0, wantW: 0, wT: 0, fire: 0, acq: 0, wander: -1, dirX: 0, dirY: 0, thinkAt: Math.floor(Math.random() * 6),
+      escT: 0, escNode: -1, goalT: 0, ban: {}, stuckT: 0, lastX: 0, lastY: 0, unstick: 0, wantW: 0, wT: 0, fire: 0, acq: 0, wander: -1, dirX: 0, dirY: 0, thinkAt: Math.floor(Math.random() * 6),
       inited: false });
   }
   itemField(i) {
     let f = this.fields.get(i);
-    if (!f) { const pk = this.host.world.pickups[i]; f = this.nav.field(this.nav.nodeAt(pk.x, pk.y)); this.fields.set(i, f); }
+    if (!f) { const pk = this.host.world.pickups[i]; f = this.nav.field(this.nav.itemNode(pk)); this.fields.set(i, f); }
     return f;
   }
   // called once per host tick, before the sim step
@@ -254,18 +272,19 @@ export class BotManager {
           if (b.goalItem >= 0) {
             const pk = w.pickups[b.goalItem];
             if (!pk.active || Math.hypot(pk.x - p.x, pk.y - p.y) < 30) b.goalItem = -1;
+            else if (tick - b.goalT > 1500) { b.ban[b.goalItem] = tick + 3600; b.goalItem = -1; }   // not getting there: try something else for a while
           }
           if (b.goalItem < 0 && here >= 0) {
             let built = 0, bi = -1, bv = 0.02;
             w.pickups.forEach((pk, i) => {
-              if (!pk.active) return;
+              if (!pk.active || b.ban[i] > tick) return;
               let f = this.fields.get(i);
               if (!f) { if (built >= 3) return; f = this.itemField(i); built++; }
               const steps = f[here]; if (steps === INF) return;
               const v = (itemValue(pk.type, p) + Math.random() * 0.15) / (1 + steps * STEP / 900);
               if (v > bv) { bv = v; bi = i; }
             });
-            b.goalItem = bi;
+            b.goalItem = bi; b.goalT = tick;
           }
         }
       }
