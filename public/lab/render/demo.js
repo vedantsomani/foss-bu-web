@@ -2,6 +2,7 @@
 //                                              &bench=1 &frames=300 &things=0
 //   &door=1        run the real sim (game/sim.js) in the page: every door/lift/floor special in the map is triggered every ~6 s and
 //                  the live heights are fed to renderer.setSectorHeights() each frame
+//   &freeze=1      (with door=1) do not advance the sim after the &t= pre-run (deterministic screenshots)
 //   &doorcam=N     (with door=1) put the camera 70 units in front of the N-th manual door, looking at it;  &t=TICKS pre-runs the sim
 //   &light=x,y,z,radius   one static dynamic light (to check that it does not leak through walls)
 import { fetchWad, parseMap, pointInSector } from '../wad.js';
@@ -151,7 +152,7 @@ async function main() {
       r.setEntities(rockets.map((k, i) => ({ id: 'r' + i, x: k.x, y: k.y, z: k.z - 8, sprite: 'MISLA1', fullbright: true })).concat(window.__extraEnts || []));
     }
     if (sim) {
-      simAcc += bench ? 2 / 60 : dt;
+      simAcc += q.get('freeze') === '1' ? 0 : bench ? 2 / 60 : dt;
       while (simAcc >= 1 / 60) {
         simAcc -= 1 / 60;
         if (sim.tick % 360 === 0) for (const li of doorLines) S.triggerLine(sim, li);
