@@ -28,7 +28,7 @@ function lumpName(u8, o) {
   return td.decode(u8.subarray(o, e)).toUpperCase();
 }
 
-export async function fetchWad(url) {
+async function fetchBuffer(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error('fetchWad: HTTP ' + res.status + ' for ' + url);
   let buf = await res.arrayBuffer();
@@ -37,7 +37,45 @@ export async function fetchWad(url) {
     const ds = new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip')));
     buf = await ds.arrayBuffer();
   }
-  return readWad(buf);
+  return buf;
+}
+export async function fetchWad(url) { return readWad(await fetchBuffer(url)); }
+
+// Load an IWAD and lay PWADs over it (the standard Doom rule: a patch lump replaces the base lump of the same name).
+// A missing PWAD is not an error. Returns a Wad (readWad) of the merged data.
+export async function fetchWadStack(iwadUrl, pwadUrls = []) {
+  let buf = await fetchBuffer(iwadUrl);
+  const patched = new Set();
+  for (const u of pwadUrls) {
+    try { const pb = await fetchBuffer(u); buf = mergeWads(buf, pb); for (const l of readWad(pb).lumps) patched.add(l.name); } catch { /* optional patch not available */ }
+  }
+  const wad = readWad(buf); wad.patchNames = patched;   // which lumps came from a PWAD (branding lumps are only trusted from there)
+  return wad;
+}
+
+const MAP_LUMP = /^(MAP\d\d|E\dM\d|THINGS|LINEDEFS|SIDEDEFS|VERTEXES|SEGS|SSECTORS|NODES|SECTORS|REJECT|BLOCKMAP|[A-Z]{1,2}_(START|END))$/;
+// mergeWads(baseBuf, patchBuf) -> ArrayBuffer of a new IWAD. Patch lumps replace same-named base lumps in place (so first-match and
+// last-match readers agree); new names, map data and markers are appended.
+export function mergeWads(baseBuf, patchBuf) {
+  const a = readWad(baseBuf), b = readWad(patchBuf);
+  const out = a.lumps.map((l, i) => ({ name: l.name, data: a.lumpAt(i) }));
+  const first = new Map(); out.forEach((l, i) => { if (!first.has(l.name)) first.set(l.name, i); });
+  b.lumps.forEach((l, i) => {
+    const data = b.lumpAt(i);
+    if (!MAP_LUMP.test(l.name) && first.has(l.name)) out[first.get(l.name)] = { name: l.name, data };
+    else out.push({ name: l.name, data });
+  });
+  let total = 12; for (const l of out) total += l.data.length;
+  const buf = new ArrayBuffer(total + out.length * 16), u8 = new Uint8Array(buf), dv = new DataView(buf);
+  u8.set([0x49, 0x57, 0x41, 0x44]); dv.setInt32(4, out.length, true); dv.setInt32(8, total, true);
+  let off = 12;
+  out.forEach((l, i) => {
+    u8.set(l.data, off);
+    const d = total + i * 16; dv.setInt32(d, off, true); dv.setInt32(d + 4, l.data.length, true);
+    for (let k = 0; k < 8; k++) u8[d + 8 + k] = k < l.name.length ? l.name.charCodeAt(k) : 0;
+    off += l.data.length;
+  });
+  return buf;
 }
 
 export function readWad(arrayBuffer) {

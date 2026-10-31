@@ -1,17 +1,20 @@
 // sim.js - deterministic 60 Hz gameplay simulation. Plain-object state, no DOM, no wall-clock, no Math.random.
 // Runs identically on the host, on clients (prediction) and in tests.
 import { WEAPONS, AMMO_MAX, ITEMS, START_AMMO, RESPAWN_TICKS, RESPAWN_POWER } from './weapons.js';
+import { getRules, weaponTable, doomSpeed, DOOM_TIC } from './rules.js';
 import { Writer, Reader, PLAYER_FIELDS, newPlayer, clonePlayer, writePlayer, readPlayer } from './playercodec.js';
 
 export const TICK_RATE = 60, DT = 1 / 60;
 export const RADIUS = 16, HEIGHT = 56, EYE = 48, STEP_MAX = 24;
 export const GRAVITY = 900, JUMP_V = 330, RUN_SPEED = 420, SPRINT_SPEED = 560;
 export const GROUND_ACCEL = 12, GROUND_FRICTION = 9, AIR_ACCEL = 3, AIR_SPEED_CAP = 80;
-export const BTN = { FIRE: 1, JUMP: 2, SPRINT: 4, USE: 8 };
+export const BTN = { FIRE: 1, JUMP: 2, SPRINT: 4, USE: 8, AUTOAIM: 16 };
 export const SPAWN_PROT_TICKS = 180, RESPAWN_DELAY = 180;
 export const WS = { READY: 0, LOWER: 1, RAISE: 2 };
 const SWITCH_TICKS = 10, STEP_SMOOTH = 6;
 const TWO_PI = Math.PI * 2;
+const MODERN_RULES = getRules('modern');
+export const eyeOf = world => ((world && world.rules) || MODERN_RULES).eye;
 
 // ---------------------------------------------------------------- PRNG (mulberry32, state in world.rng)
 export function rand(world) {
@@ -56,7 +59,7 @@ export function prepareMap(map) {
   const gunLines = []; lines.forEach((l, i) => { if (l.special && SPECIALS[l.special] && SPECIALS[l.special].trig === 'G') gunLines.push(i); });
   prep = { map, lines, cells, gw, gh, minX, minY, maxX, maxY, stamp: new Int32Array(lines.length), stampN: 0, pointInSector: null,
     baseFloor: Float32Array.from(map.sectors, sc => sc.floor), baseCeil: Float32Array.from(map.sectors, sc => sc.ceil),
-    nSec, secLines, tagSectors, secCx, secCy, gunLines, hasSpecials: lines.some(l => l.special && SPECIALS[l.special]), tele: null };
+    nSec, secLines, tagSectors, secCx, secCy, gunLines, sky: Uint8Array.from(map.sectors, sc => (/^F_SKY/i.test(sc.ceilTex || '') ? 1 : 0)), hasSpecials: lines.some(l => l.special && SPECIALS[l.special]), tele: null };
   // exact BSP point location when the map carries nodes (otherwise the nearest-linedef fallback below is used)
   if (map.nodes && map.nodes.length && map.subsectors && map.subsectors.length && map.segs && map.segs.length) {
     const { nodes, subsectors, segs, linedefs, sidedefs } = map;
@@ -179,28 +182,43 @@ export function quantizeInput(i) {
 // ---------------------------------------------------------------- player movement (pure on p + prep)
 export function moveCommand(prep, p, inp, dt, events, W) {
   const F = W ? W.sectorFloor : prep.baseFloor, C = W ? W.sectorCeil : prep.baseCeil;
+  const R = (W && W.rules) || MODERN_RULES;
   p.yaw = inp.yaw; p.pitch = clamp(inp.pitch, -1.5, 1.5);
   // view step smoothing decay
   if (p.stepOff > 0) p.stepOff = Math.max(0, p.stepOff - 140 * dt); else if (p.stepOff < 0) p.stepOff = Math.min(0, p.stepOff + 140 * dt);
   const cy = Math.cos(p.yaw), sy = Math.sin(p.yaw);
-  let wx = cy * inp.fwd + sy * inp.side, wy = sy * inp.fwd - cy * inp.side;
-  let wl = Math.hypot(wx, wy);
-  let wish = (inp.buttons & BTN.SPRINT ? SPRINT_SPEED : RUN_SPEED);
-  if (wl > 1) { wx /= wl; wy /= wl; wl = 1; }
-  if (wl > 1e-6) { wish *= wl; wx /= wl; wy /= wl; } else wish = 0;
-  if (p.grounded) {
-    const sp = Math.hypot(p.vx, p.vy);
-    if (sp > 0) { const drop = Math.max(sp, 100) * GROUND_FRICTION * dt; const k = Math.max(0, sp - drop) / sp; p.vx *= k; p.vy *= k; }
-    if (wish > 0) {
-      const cur = p.vx * wx + p.vy * wy, add = wish - cur;
-      if (add > 0) { const a = Math.min(GROUND_ACCEL * wish * dt, add); p.vx += wx * a; p.vy += wy * a; }
+  if (R.move === 'doom') {
+    // vanilla: every tic thrust (cmd * 2048/65536) is added to the momentum, then momentum *= 0xE800/0x10000 (ground only).
+    // Converted to continuous time: velocity relaxes toward the steady-state speed of the command with the same time constant.
+    const run = (inp.buttons & BTN.SPRINT) !== 0;
+    const fm = inp.fwd * (run ? R.runFwd : R.walkFwd), sm = inp.side * (run ? R.runSide : R.walkSide);
+    if (p.grounded) {
+      const tx = (cy * doomSpeed(fm) + sy * doomSpeed(sm)), ty = (sy * doomSpeed(fm) - cy * doomSpeed(sm));
+      const a = 1 - Math.pow(R.friction, dt / DOOM_TIC);
+      p.vx += (tx - p.vx) * a; p.vy += (ty - p.vy) * a;
+      if (fm === 0 && sm === 0 && Math.abs(p.vx) < 2.2 && Math.abs(p.vy) < 2.2) { p.vx = 0; p.vy = 0; }   // STOPSPEED
+      if (R.canJump && (inp.buttons & BTN.JUMP)) { p.vz = JUMP_V; p.grounded = false; events && events.push({ t: 'jump', p: p.id }); }
     }
-    if (inp.buttons & BTN.JUMP) { p.vz = JUMP_V; p.grounded = false; events && events.push({ t: 'jump', p: p.id }); }
-  } else if (wish > 0) {
-    const ws = Math.min(wish, AIR_SPEED_CAP), cur = p.vx * wx + p.vy * wy, add = ws - cur;
-    if (add > 0) { const a = Math.min(AIR_ACCEL * wish * dt, add); p.vx += wx * a; p.vy += wy * a; }
+  } else {
+    let wx = cy * inp.fwd + sy * inp.side, wy = sy * inp.fwd - cy * inp.side;
+    let wl = Math.hypot(wx, wy);
+    let wish = (inp.buttons & BTN.SPRINT ? SPRINT_SPEED : RUN_SPEED);
+    if (wl > 1) { wx /= wl; wy /= wl; wl = 1; }
+    if (wl > 1e-6) { wish *= wl; wx /= wl; wy /= wl; } else wish = 0;
+    if (p.grounded) {
+      const sp = Math.hypot(p.vx, p.vy);
+      if (sp > 0) { const drop = Math.max(sp, 100) * GROUND_FRICTION * dt; const k = Math.max(0, sp - drop) / sp; p.vx *= k; p.vy *= k; }
+      if (wish > 0) {
+        const cur = p.vx * wx + p.vy * wy, add = wish - cur;
+        if (add > 0) { const a = Math.min(GROUND_ACCEL * wish * dt, add); p.vx += wx * a; p.vy += wy * a; }
+      }
+      if (inp.buttons & BTN.JUMP) { p.vz = JUMP_V; p.grounded = false; events && events.push({ t: 'jump', p: p.id }); }
+    } else if (wish > 0) {
+      const ws = Math.min(wish, AIR_SPEED_CAP), cur = p.vx * wx + p.vy * wy, add = ws - cur;
+      if (add > 0) { const a = Math.min(AIR_ACCEL * wish * dt, add); p.vx += wx * a; p.vy += wy * a; }
+    }
   }
-  if (!p.grounded) p.vz -= GRAVITY * dt;
+  if (!p.grounded) p.vz -= R.gravity * dt;
   // horizontal
   moveCircle(prep, p, p.vx * dt, p.vy * dt, F, C);
   // vertical
@@ -223,8 +241,9 @@ export function moveCommand(prep, p, inp, dt, events, W) {
 export function createWorld(map, seed = 1, opts = {}) {
   const prep = prepareMap(map);
   if (opts.pointInSector) prep.pointInSector = opts.pointInSector;
-  const world = { map, prep, tick: 0, seed: seed >>> 0, rng: seed >>> 0, players: {}, projectiles: [], nextProj: 1, pickups: [], events: [], auth: true,
+  const world = { map, prep, tick: 0, seed: seed >>> 0, rng: seed >>> 0, players: {}, projectiles: [], nextProj: 1, pickups: [], events: [], auth: true, rules: getRules(opts.rules), wpn: null,
     spawns: [] };
+  world.wpn = weaponTable(world.rules);
   initDynamics(world);
   for (const t of map.things) if (t.type === 11) world.spawns.push({ x: t.x, y: t.y, angle: t.angle });
   if (!world.spawns.length) for (const t of map.things) if (t.type >= 1 && t.type <= 4) world.spawns.push({ x: t.x, y: t.y, angle: t.angle });
@@ -240,7 +259,8 @@ export function createWorld(map, seed = 1, opts = {}) {
 export function createPredictWorld(map, opts = {}) {
   const prep = prepareMap(map);
   if (opts.pointInSector) prep.pointInSector = opts.pointInSector;
-  const world = { map, prep, tick: 0, rng: 1, players: {}, projectiles: [], pickups: [], events: [], auth: false, spawns: [], nextProj: 1 };
+  const world = { map, prep, tick: 0, rng: 1, players: {}, projectiles: [], pickups: [], events: [], auth: false, spawns: [], nextProj: 1, rules: getRules(opts.rules) };
+  world.wpn = weaponTable(world.rules);
   initDynamics(world);
   return world;
 }
@@ -281,7 +301,7 @@ export function spawnPlayer(world, p) {
 }
 
 // ---------------------------------------------------------------- ray tracing
-// Returns {s, kind:'none'|'wall'|'player', target, x,y,z}. (dx,dy,dz) must be a unit vector.
+// Returns {s, kind:'none'|'wall'|'sky'|'player', target, x,y,z}. 'sky' = the ray left through a sky ceiling (missiles vanish there, as in Doom). (dx,dy,dz) must be a unit vector.
 // posFn(id) -> {x,y,z} gives (possibly rewound) player positions.
 // Floors and ceilings are tested per sector along the ray (split at every two-sided line it crosses), so a shot can leave
 // its own sector: aiming down off a ledge or up out of a pit is not stopped by the *origin* sector's floor/ceiling plane.
@@ -298,8 +318,8 @@ export function traceRay(world, ox, oy, oz, dx, dy, dz, range, shooterId, posFn,
     const s = (ax * l.dy - ay * l.dx) / den, u = (ax * dy - ay * dx) / den;
     if (s < -1e-4 || s > best || u < 0 || u > 1) continue;
     const z = oz + dz * s;
-    if (l.oneSided) { best = s; kind = 'wall'; continue; }
-    if (z < Math.max(F[l.fs], F[l.bs]) || z > Math.min(C[l.fs], C[l.bs])) { best = s; kind = 'wall'; }
+    if (l.oneSided) { best = s; kind = 'wall'; continue; }   // (a sky-textured upper wall of a one-sided line is still a wall)
+    if (z < Math.max(F[l.fs], F[l.bs]) || z > Math.min(C[l.fs], C[l.bs])) { best = s; kind = z > Math.min(C[l.fs], C[l.bs]) && prep.sky[l.fs] && prep.sky[l.bs] ? 'sky' : 'wall'; }
     else if (s > 0) _rayX[nx++] = s;
   }
   // floor / ceiling of every sector the ray passes through (only needed when it is not horizontal)
@@ -311,7 +331,7 @@ export function traceRay(world, ox, oy, oz, dx, dy, dz, range, shooterId, posFn,
       if (s1 - s0 < 1e-6) continue;
       const m = (s0 + s1) * 0.5, sec = sectorAt(prep, ox + dx * m, oy + dy * m);
       const sp = (dz < 0 ? F[sec] : C[sec]) - oz, st = sp / dz;
-      if (st > 0 && st >= s0 && st < s1) { best = st; kind = 'wall'; break; }
+      if (st > 0 && st >= s0 && st < s1) { best = st; kind = dz > 0 && prep.sky[sec] ? 'sky' : 'wall'; break; }
       s0 = s1;
     }
   }
@@ -373,7 +393,7 @@ function splashReaches(world, x, y, z, pl) {
   return false;
 }
 function explode(world, proj, x, y, z, directTarget) {
-  const def = WEAPONS[proj.w].proj;
+  const def = world.wpn[proj.w].proj, hk = world.rules.horizontalKnock;
   world.events.push({ t: 'explode', x, y, z, w: proj.w });
   if (def.splash <= 0) return;
   for (const id of sortedIds(world)) {
@@ -388,10 +408,16 @@ function explode(world, proj, x, y, z, directTarget) {
     if (dmg <= 0) continue;
     const taken = damagePlayer(world, pl, dmg, proj.owner, proj.w);
     world.events.push({ t: 'hit', p: proj.owner, target: id, dmg: taken, x: cx, y: cy, z: cz, w: proj.w, splash: 1 });
-    // knockback
-    const L = dist || 1, kb = Math.min(dmg * 4, 700);
-    pl.vx += (cx - x) / L * kb; pl.vy += (cy - y) / L * kb;
-    if (pl.grounded || true) { pl.vz += Math.max(0, (cz - z) / L) * kb * 0.6 + (dmg > 20 ? 60 : 0); if (pl.vz > 0) pl.grounded = false; }
+    // knockback. Vanilla Doom pushes horizontally only (damage/8 map units per tic of momentum); modern adds lift.
+    if (hk) {
+      const L = Math.hypot(cx - x, cy - y);
+      if (L > 1e-3) { const kb = dmg * 0.125 * 35; pl.vx += (cx - x) / L * kb; pl.vy += (cy - y) / L * kb; }
+      else if (pl.id === proj.owner) { /* straight down / point blank: no push */ }
+    } else {
+      const L = dist || 1, kb = Math.min(dmg * 4, 700);
+      pl.vx += (cx - x) / L * kb; pl.vy += (cy - y) / L * kb;
+      pl.vz += Math.max(0, (cz - z) / L) * kb * 0.6 + (dmg > 20 ? 60 : 0); if (pl.vz > 0) pl.grounded = false;
+    }
   }
 }
 
@@ -403,40 +429,73 @@ export function bestWeapon(p) {
   for (const d of WEAPONS) if (ownsWeapon(p, d.id) && hasAmmo(p, d.id) && d.id !== 0 && d.slot > bs) { bs = d.slot; best = d.id; }
   return best;
 }
-function beginSwitch(p, w) { p.pendW = w; p.wstate = WS.LOWER; p.wtimer = SWITCH_TICKS; }
+function beginSwitch(world, p, w) { p.pendW = w; p.wstate = WS.LOWER; p.wtimer = world.rules.switchTicks; }
 
 function weaponCommand(world, p, inp, opts) {
-  const ev = world.events;
+  const ev = world.events, sw = world.rules.switchTicks;
   if (p.cooldown > 0) p.cooldown--;
   if (p.wstate === WS.LOWER) {
-    if (--p.wtimer <= 0) { p.weapon = p.pendW; p.wstate = WS.RAISE; p.wtimer = SWITCH_TICKS; ev.push({ t: 'switch', p: p.id, w: p.weapon }); }
+    if (--p.wtimer <= 0) { p.weapon = p.pendW; p.wstate = WS.RAISE; p.wtimer = sw; ev.push({ t: 'switch', p: p.id, w: p.weapon }); }
   } else if (p.wstate === WS.RAISE) {
     if (--p.wtimer <= 0) { p.wstate = WS.READY; p.wtimer = 0; }
   } else if (inp.weapon > 0 && inp.weapon - 1 < WEAPONS.length && inp.weapon - 1 !== p.weapon && ownsWeapon(p, inp.weapon - 1)) {
-    beginSwitch(p, inp.weapon - 1);
+    beginSwitch(world, p, inp.weapon - 1);
   }
   const fireDown = (inp.buttons & BTN.FIRE) !== 0, edge = fireDown && !(p.lastButtons & BTN.FIRE);
-  const d = WEAPONS[p.weapon];
+  const d = world.wpn[p.weapon];
   if (p.wstate === WS.READY && p.cooldown === 0) {
-    if (hasAmmo(p, p.weapon)) { if (d.auto ? fireDown : edge) shoot(world, p, inp, d, opts); }
-    else if (fireDown) { const b = bestWeapon(p); if (b !== p.weapon) beginSwitch(p, b); }   // out of ammo: fall back (also while fire is merely held)
+    if (!fireDown) p.refire = 0;
+    if (hasAmmo(p, p.weapon)) { if (d.auto || world.rules.autoAll ? fireDown : edge) shoot(world, p, inp, d, opts); }
+    else if (fireDown) { const b = bestWeapon(p); if (b !== p.weapon) beginSwitch(world, p, b); }   // out of ammo: fall back (also while fire is merely held)
   }
   p.lastButtons = inp.buttons;
+}
+
+// Vanilla-style autoaim: look for a target within +-5.6 degrees of the aim line (Doom tries the aim angle and +-1<<26) that is
+// in line of sight, and return the pitch to it. {found, dyaw, pitch}
+const _aim = { found: false, dyaw: 0, pitch: 0 };
+function autoAim(world, p, ox, oy, oz, yaw, range, posFn) {
+  _aim.found = false;
+  let bestA = 1e9;
+  for (const id of sortedIds(world)) {
+    const t = world.players[id];
+    if (id === p.id || !t.alive) continue;
+    const pos = posFn ? posFn(id) : t; if (!pos) continue;
+    const dx = pos.x - ox, dy = pos.y - oy, dist = Math.hypot(dx, dy);
+    if (dist < 1 || dist > range) continue;
+    let da = Math.atan2(dy, dx) - yaw; da = Math.atan2(Math.sin(da), Math.cos(da));
+    if (Math.abs(da) > 0.0982 || Math.abs(da) >= bestA) continue;
+    const tz = pos.z + HEIGHT * 0.6 - oz, pitch = Math.atan2(tz, dist);
+    if (Math.abs(pitch) > 0.56) continue;                       // vanilla's +-100/160 slope window
+    const l = Math.hypot(dist, tz), r = traceRay(world, ox, oy, oz, dx / l, dy / l, tz / l, l + 1, p.id, posFn);
+    if (r.kind !== 'player' || r.target !== id) continue;
+    bestA = Math.abs(da); _aim.found = true; _aim.dyaw = da; _aim.pitch = pitch;
+  }
+  return _aim;
 }
 
 function shoot(world, p, inp, d, opts) {
   p.ammo[d.ammoType] -= d.cost;
   p.cooldown = d.cooldown;
-  const ox = p.x, oy = p.y, oz = p.z + EYE;
+  const ox = p.x, oy = p.y, oz = p.z + world.rules.eye;
   world.events.push({ t: 'fire', p: p.id, w: d.id, x: ox, y: oy, z: oz });
+  const refire = p.refire | 0; p.refire = 1;
   if (!world.auth) return; // prediction world: only the local, deterministic consequences
   p.spawnProt = 0; // firing ends spawn protection
   const lag = opts && opts.lagComp ? opts.lagComp(p.id, inp) : null;
   const posFn = lag ? (id => lag[id] || world.players[id]) : null;
-  const cosP = Math.cos(p.pitch), sinP = Math.sin(p.pitch);
+  let baseYaw = p.yaw, basePitch = p.pitch;
+  if (inp.buttons & BTN.AUTOAIM) {
+    const a = autoAim(world, p, ox, oy, oz, baseYaw, d.kind === 'hitscan' ? 2048 : 2048, posFn);
+    if (a.found) { basePitch = a.pitch; if (d.kind !== 'hitscan') baseYaw += a.dyaw; }
+  }
+  const ds = d.dspread;
   for (let i = 0; i < d.pellets; i++) {
-    let yaw = p.yaw, pitch = p.pitch;
-    if (d.spread) { yaw += (rand(world) * 2 - 1) * d.spread; pitch += (rand(world) * 2 - 1) * d.spread * 0.6; }
+    let yaw = baseYaw, pitch = basePitch;
+    if (ds) {
+      if (!(ds.first && !refire)) yaw += (rand(world) - rand(world)) * ds.h;
+      if (ds.v) pitch = Math.atan(Math.tan(pitch) + (rand(world) - rand(world)) * ds.v);
+    } else if (d.spread) { yaw += (rand(world) * 2 - 1) * d.spread; pitch += (rand(world) * 2 - 1) * d.spread * 0.6; }
     const cp = Math.cos(pitch), dx = Math.cos(yaw) * cp, dy = Math.sin(yaw) * cp, dz = Math.sin(pitch);
     if (d.kind === 'hitscan') {
       const r = traceRay(world, ox, oy, oz, dx, dy, dz, d.range, p.id, posFn);
@@ -448,11 +507,14 @@ function shoot(world, p, inp, d, opts) {
       } else if (r.kind === 'wall') world.events.push({ t: 'impact', x: r.x - dx * 0.5, y: r.y - dy * 0.5, z: r.z - dz * 0.5, w: d.id });
     } else {
       const pd = d.proj;
-      // spawn slightly ahead of the eye; abort into an immediate explosion if that crosses a wall
+      // The missile starts 12 units ahead of the eye line, 8 below it (Doom: z + 32). If that segment crosses a wall (standing
+      // against it) the rocket explodes right there instead of being created inside the wall.
+      const sz = oz - 8;
       const r = traceRay(world, ox, oy, oz, dx, dy, dz, 12, p.id, null, 0, -2);
-      const pr = { id: world.nextProj++, owner: p.id, w: d.id, x: ox + dx * 12, y: oy + dy * 12, z: oz - 6 + dz * 12,
+      const pr = { id: world.nextProj++, owner: p.id, w: d.id, x: ox + dx * 12, y: oy + dy * 12, z: sz + dz * 12,
         vx: dx * pd.speed, vy: dy * pd.speed, vz: dz * pd.speed, ttl: pd.ttl, dmg: rollDmg(world, pd.dmg) };
       if (r.kind === 'wall') { pr.x = r.x - dx * 2; pr.y = r.y - dy * 2; pr.z = r.z - dz * 2; explode(world, pr, pr.x, pr.y, pr.z, -1); }
+      else if (r.kind === 'sky') { /* fired into a sky ceiling: it just flies away */ }
       else world.projectiles.push(pr);
     }
   }
@@ -461,7 +523,7 @@ function shoot(world, p, inp, d, opts) {
 function updateProjectiles(world, dt) {
   const keep = [];
   for (const pr of world.projectiles) {
-    const def = WEAPONS[pr.w].proj;
+    const def = world.wpn[pr.w].proj;
     const sp = Math.hypot(pr.vx, pr.vy, pr.vz), dist = sp * dt;
     const dx = pr.vx / sp, dy = pr.vy / sp, dz = pr.vz / sp;
     const r = traceRay(world, pr.x, pr.y, pr.z, dx, dy, dz, dist, -1, null, def.radius, pr.owner);
@@ -472,6 +534,7 @@ function updateProjectiles(world, dt) {
       explode(world, pr, pr.x, pr.y, pr.z, -1);
       continue;
     }
+    if (r.kind === 'sky') { world.events.push({ t: 'vanish', w: pr.w, x: r.x, y: r.y, z: r.z }); continue; }   // Doom removes missiles that hit the sky silently
     const ex = r.x - dx * 1, ey = r.y - dy * 1, ez = r.z - dz * 1;
     if (r.kind === 'player') {
       const tg = world.players[r.target];
@@ -492,7 +555,7 @@ function tryPickup(world, p, it) {
     if (isNew || room) {
       p.owned |= 1 << it.weapon;
       p.ammo[d.ammoType] = Math.min(AMMO_MAX[d.ammoType], p.ammo[d.ammoType] + d.pickupAmmo);
-      if (isNew && p.wstate === WS.READY) beginSwitch(p, it.weapon);
+      if (isNew && p.wstate === WS.READY) beginSwitch(world, p, it.weapon);
       used = true;
     }
   }

@@ -46,6 +46,7 @@ const DEFAULTS = {
   fov: 90,               // horizontal FOV (degrees) of a 4:3 view; wider windows get hor+
   pixelStretch: 1.2,     // vanilla Doom's 1.2 non-square pixel (taller world); 1 = pure perspective
   bloom: true, bloomStrength: 0.7, bloomThreshold: 0.62,
+  extraLight: 0,         // Doom extralight: extra light levels added to every sector (weapon flash)
   classic: false,        // quantise to PLAYPAL through a 3D LUT + banded light levels
   fogDensity: 0.00035, fogColor: [0.03, 0.035, 0.06],
   ambient: 0.045, lightGain: 1.0, gamma: 1.0, vignette: 0.25, lodBias: 0,
@@ -807,6 +808,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
     gl.uniform3fv(u.uFogColor, opt.fogColor);
     gl.uniform1f(u.uClassic, opt.classic ? 1 : 0);
     gl.uniform1f(u.uLightGain, opt.lightGain);
+    gl.uniform1f(u.uExtra, opt.extraLight || 0);
   }
 
   function collectLights(dt, cam) {

@@ -19,9 +19,10 @@ uniform float uFogDensity;
 uniform vec3 uFogColor;
 uniform float uClassic;     // 1 = quantised light levels (classic Doom banding)
 uniform float uLightGain;
+uniform float uExtra;       // extra light levels (Doom's extralight: weapon flash, light-amp)
 
 float doomShade(float light, float depth) {
-  float ln = clamp(light * (1.0 / 16.0), 0.0, 15.0);
+  float ln = clamp(light * (1.0 / 16.0) + uExtra, 0.0, 15.0);
   if (uClassic > 0.5) ln = floor(ln);
   float startmap = (15.0 - ln) * 4.0;
   float idx = clamp(startmap - 1280.0 / max(depth, 1.0), 0.0, 31.0);

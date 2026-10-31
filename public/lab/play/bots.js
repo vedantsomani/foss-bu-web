@@ -234,7 +234,7 @@ export class BotManager {
   }
   act(b, p, w) {
     const nav = this.nav, sk = this.skill, tick = w.tick;
-    const ex = p.x, ey = p.y, ez = p.z + S.EYE;
+    const ex = p.x, ey = p.y, ez = p.z + S.eyeOf(w);
     // ---------- perception + goal choice at ~10 Hz
     if (tick >= b.thinkAt) {
       b.thinkAt = tick + 6;

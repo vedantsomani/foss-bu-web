@@ -1,15 +1,15 @@
 // client.js - prediction + reconciliation for the local player, interpolation for everyone else.
-import { createPredictWorld, runCommand, quantizeInput, DT, EYE, initialSectorState } from '../game/sim.js';
+import { createPredictWorld, runCommand, quantizeInput, DT, eyeOf, initialSectorState } from '../game/sim.js';
 import { clonePlayer } from '../game/playercodec.js';
 import { MSG, TICK_MS, REDUNDANCY, Reader, Writer, encodeInputPacket, decodeSnapshot, unpackBit, SEC_STRIDE } from './protocol.js';
 import { Interpolator } from './interp.js';
 
 export class GameClient {
   // inputSource(): () => {fwd,side,yaw,pitch,buttons,weapon}, polled once per 60 Hz client tick
-  constructor({ map, endpoint, hostId = 1, id, interpMs = 100, inputSource = () => ({}), redundancy = REDUNDANCY, pointInSector = null }) {
+  constructor({ map, endpoint, hostId = 1, id, interpMs = 100, inputSource = () => ({}), redundancy = REDUNDANCY, pointInSector = null, rules = 'modern' }) {
     this.map = map; this.ep = endpoint; this.hostId = hostId; this.id = id; this.interpTicks = interpMs / TICK_MS;
     this.inputSource = inputSource; this.redundancy = redundancy;
-    this.pw = createPredictWorld(map, pointInSector ? { pointInSector } : {});
+    this.pw = createPredictWorld(map, pointInSector ? { pointInSector, rules } : { rules });
     // authoritative sector state (see protocol SEC_STRIDE tuples); pw heights follow it, extrapolated along the sent velocities
     this.secInit = initialSectorState(this.pw.prep); this.secStates = new Map(); this.secCur = this.secInit.slice(); this.moving = [];
     this.heights = { floors: this.pw.sectorFloor, ceils: this.pw.sectorCeil };
@@ -132,7 +132,7 @@ export class GameClient {
   // local view with correction smoothing applied
   localView() {
     const m = this.me; if (!m) return null;
-    return { ...m, x: m.x + this.offsetX, y: m.y + this.offsetY, z: m.z + this.offsetZ, eyeZ: m.z + this.offsetZ + EYE + m.stepOff };
+    return { ...m, x: m.x + this.offsetX, y: m.y + this.offsetY, z: m.z + this.offsetZ, eyeZ: m.z + this.offsetZ + eyeOf(this.pw) + m.stepOff };
   }
   pickupActive(i) { return this.pickupBits ? !!unpackBit(this.pickupBits, i) : true; }
   drainEvents() { const e = this.events; this.events = []; return e; }
