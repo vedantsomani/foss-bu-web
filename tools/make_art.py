@@ -1,7 +1,9 @@
-"""Build Fragline's art: public/fragline.wad (TITLEPIC), public/share.png and public/backdrop.jpg.
+"""Build Fragline's art: public/fragline.wad, public/share.png and public/backdrop.jpg.
 
 Usage: python3 tools/make_art.py   (needs Pillow; run from the repository root)
-The WAD only replaces the title screen; all maps and other graphics come from FreeDM.
+The PWAD overrides every lump of the game data that carries the data set's own name or logo
+(TITLEPIC, M_DOOM, CREDIT, HELP, ENDOOM and the DEHACKED text strings).
+Maps, sounds and other graphics still come from the game data (see public/credits.html).
 """
 import gzip
 import struct
@@ -147,11 +149,160 @@ def write_wad(path, lumps):
     path.write_bytes(struct.pack('<4sII', b'PWAD', len(lumps), pos) + bytes(data) + bytes(directory))
 
 
+def pal_image(palette):
+    pal_img = Image.new('P', (1, 1))
+    pal_img.putpalette(palette)
+    return pal_img
+
+
+def to_doom_patch(rgba, palette, left=0, top=0):
+    """Encode an RGBA image (alpha < 128 is transparent) as a Doom patch with offsets."""
+    w, h = rgba.size
+    alpha = rgba.getchannel('A')
+    indexed = rgba.convert('RGB').quantize(palette=pal_image(palette), dither=Image.Dither.NONE)
+    px, ap = indexed.load(), alpha.load()
+    body, offsets, pos = bytearray(), [], 8 + 4 * w
+    for x in range(w):
+        offsets.append(pos + len(body))
+        y = 0
+        while y < h:
+            if ap[x, y] < 128:
+                y += 1
+                continue
+            start = y
+            while y < h and ap[x, y] >= 128 and y - start < 128:
+                y += 1
+            run = [px[x, yy] for yy in range(start, y)]
+            body += bytes([start, len(run), run[0]]) + bytes(run) + bytes([run[-1]])
+        body.append(255)
+    return struct.pack('<hhhh', w, h, left, top) + b''.join(struct.pack('<I', o) for o in offsets) + bytes(body)
+
+
+def from_doom_patch(data, palette):
+    w, h, _, _ = struct.unpack_from('<hhhh', data)
+    img = Image.new('RGB', (w, h))
+    px = img.load()
+    for x in range(w):
+        p = struct.unpack_from('<I', data, 8 + 4 * x)[0]
+        while data[p] != 255:
+            top, n = data[p], data[p + 1]
+            for j in range(n):
+                c = data[p + 3 + j]
+                px[x, top + j] = tuple(palette[c * 3:c * 3 + 3])
+            p += n + 4
+    return img
+
+
+def molten_text(size, text, font_obj, scale):
+    """Red/orange chunky lettering with a dark outline on a transparent canvas."""
+    w, h = size
+    big = Image.new('RGBA', (w * 4, h * 4), (0, 0, 0, 0))
+    box = ImageDraw.Draw(big).textbbox((0, 0), text, font=font_obj)
+    x = (w * 4 - (box[2] - box[0])) / 2 - box[0]
+    y = (h * 4 - (box[3] - box[1])) / 2 - box[1]
+    mask = Image.new('L', big.size, 0)
+    ImageDraw.Draw(mask).text((x, y), text, font=font_obj, fill=255)
+    outline = Image.new('L', big.size, 0)
+    ImageDraw.Draw(outline).text((x, y), text, font=font_obj, fill=255, stroke_width=int(3 * scale))
+    grad = Image.new('RGBA', big.size)
+    gp = grad.load()
+    top, span = y + box[1], max(box[3] - box[1], 1)
+    for yy in range(big.size[1]):
+        k = min(max((yy - top) / span, 0), 1)
+        colour = (255, int(200 - 170 * k), int(40 - 40 * k), 255)
+        for xx in range(big.size[0]):
+            gp[xx, yy] = colour
+    big.paste((60, 4, 0, 255), mask=outline)
+    big.paste(grad, mask=mask)
+    return big.resize((w, h), Image.Resampling.LANCZOS)
+
+
+def small_red_text(img, xy, text, size=8, fill=(200, 24, 12), centre=False):
+    f = font(SUB_FONT_CANDIDATES, size)
+    d = ImageDraw.Draw(img)
+    x, y = xy
+    if centre:
+        b = d.textbbox((0, 0), text, font=f)
+        x = (img.size[0] - (b[2] - b[0])) / 2 - b[0]
+    d.text((x + 1, y + 1), text, font=f, fill=(20, 0, 0))
+    d.text((x, y), text, font=f, fill=fill)
+
+
+def menu_logo(palette):
+    return to_doom_patch(molten_text((189, 70), 'FRAGLINE', font(FONT_CANDIDATES, 33 * 4), 1), palette, 40, -5)
+
+
+def credit_screen(palette):
+    img = render(1280, 800, title=False).resize((320, 200), Image.Resampling.LANCZOS)
+    img = img.point(lambda v: int(v * 0.8))
+    logo = molten_text((200, 40), 'FRAGLINE', font(FONT_CANDIDATES, 30 * 4), 1)
+    img.paste(logo, (60, 8), logo)
+    lines = ['Fragline is a browser deathmatch for up',
+             'to four players, built on the Crispy Doom',
+             'engine and free game data.',
+             '',
+             'Maps, sounds and graphics are the work of',
+             'many contributors; see the credits page',
+             'on the Fragline site for names and',
+             'licenses.',
+             '',
+             'Thanks for playing.']
+    y = 56
+    for line in lines:
+        small_red_text(img, (24, y), line, 10, (255, 190, 90))
+        y += 13
+    return to_doom_picture(img, palette)
+
+
+def help_screen(original, palette):
+    """Original help card with the footer URL painted over (the 'ESC to return' text stays)."""
+    img = from_doom_patch(original, palette)
+    px = img.load()
+    area = [px[x, y] for x in range(0, 70) for y in range(185, 190)]
+    fill = tuple(sum(c[i] for c in area) // len(area) for i in range(3))
+    for x in range(0, 200):
+        for y in range(191, 200):
+            px[x, y] = fill
+    return to_doom_picture(img, palette)
+
+
+def endoom():
+    rows = [''] * 25
+    rows[8] = '*** FRAGLINE ***'.center(80)
+    rows[10] = 'Thanks for playing Fragline.'.center(80)
+    out = bytearray()
+    for i, row in enumerate(rows):
+        for ch in row.ljust(80)[:80]:
+            out += bytes([ord(ch), 0x0C if i == 8 else 0x07])
+    return bytes(out)
+
+
+def dehacked():
+    return ('Patch File for DeHackEd v3.0\nDoom version = 19\nPatch format = 6\n\n'
+            '# *allow-extended-strings*\n\n[STRINGS]\n'
+            'STARTUP5 = Fragline - browser deathmatch\n'
+            'C1TEXT = Fragline\n'
+            'C2TEXT = Fragline\n'
+            'C3TEXT = Fragline\n'
+            'C4TEXT = Thank you for playing Fragline.\n'
+            'C5TEXT = Fragline\n'
+            'C6TEXT = Fragline\n'
+            'TXT_D2E1 = Fragline\n').encode()
+
+
 def main():
-    palette = read_lumps_gz(PUBLIC / 'freedm.wad.gz')['PLAYPAL'][:768]
+    freedm = read_lumps_gz(PUBLIC / 'freedm.wad.gz')
+    palette = freedm['PLAYPAL'][:768]
     # Draw large and downsample so the 320x200 title keeps clean edges.
     title = render(1280, 800).resize((320, 200), Image.Resampling.LANCZOS)
-    write_wad(PUBLIC / 'fragline.wad', [('TITLEPIC', to_doom_picture(title, palette))])
+    write_wad(PUBLIC / 'fragline.wad', [
+        ('TITLEPIC', to_doom_picture(title, palette)),
+        ('M_DOOM', menu_logo(palette)),
+        ('CREDIT', credit_screen(palette)),
+        ('HELP', help_screen(freedm['HELP'], palette)),
+        ('ENDOOM', endoom()),
+        ('DEHACKED', dehacked()),
+    ])
     render(1200, 630).save(PUBLIC / 'share.png', optimize=True)
     # Lobby backdrop without lettering, so it does not compete with the page's own logo.
     render(1200, 900, title=False).save(PUBLIC / 'backdrop.jpg', quality=82, optimize=True, progressive=True)

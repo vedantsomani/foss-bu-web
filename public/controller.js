@@ -83,6 +83,9 @@
             if (items.length) {
                 const next = items[(items.indexOf(active) + side + items.length) % items.length];
                 next.click(); next.focus();
+            } else if (active.tagName === 'SELECT') {
+                const index = Math.max(0, Math.min(active.options.length - 1, active.selectedIndex + side));
+                if (index !== active.selectedIndex) { active.selectedIndex = index; active.dispatchEvent(new Event('change', {bubbles: true})); }
             } else if (active.type === 'range') {
                 active.value = String(Number(active.value) + side * (Number(active.step) || 1));
                 active.dispatchEvent(new Event('input', {bubbles: true}));

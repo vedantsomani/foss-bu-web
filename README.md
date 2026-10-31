@@ -3,7 +3,7 @@
 Retro deathmatch for 2–4 players that runs in the browser. Create a room, share the 8-character code or link, and play. Nothing to install.
 
 - **Engine:** Chocolate Doom compiled to WebAssembly (the WebSocket networking build from Cloudflare's doom-wasm).
-- **Game data:** FreeDM, the free deathmatch set from the Freedoom project. It has 32 maps, all selectable in the lobby. No commercial Doom files are needed.
+- **Game data:** the free deathmatch set from the Freedoom project, rebranded as Fragline in the game and site. It has 32 maps, all selectable in the lobby. No commercial Doom files are needed.
 - **Modes:** Deathmatch and Deathmatch 2.0 (items respawn), with a 5–20 minute or unlimited time limit, plus solo practice on any map.
 - **Hosting:** Cloudflare Workers + Durable Objects for online rooms, or `lan_server.py` for fully offline play on a local network (Raspberry Pi or laptop).
 
@@ -61,7 +61,7 @@ node tests/browser.test.cjs http://127.0.0.1:8765 4
 
 ## Changing the art or version
 
-`python3 tools/make_art.py` regenerates the title screen (`public/fragline.wad`), `public/share.png` and `public/backdrop.jpg`. When you change any game file, bump `VERSION` in `public/game.js` and every `?v=` in the HTML pages (`npm test` checks they match). That way browsers and the offline cache pick up the new files.
+`python3 tools/make_art.py` regenerates the Fragline-branded game graphics (`public/fragline.wad`: title, menu logo, credit and help screens, quit screen and text strings), `public/share.png` and `public/backdrop.jpg`. When you change any game file, bump `VERSION` in `public/game.js` and every `?v=` in the HTML pages (`npm test` checks they match). That way browsers and the offline cache pick up the new files.
 
 ## Credits
 

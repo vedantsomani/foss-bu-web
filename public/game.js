@@ -1,12 +1,12 @@
 /* Fragline browser client: downloads, menus, settings, rooms and engine start-up. */
 'use strict';
 (() => {
-    const VERSION = '2.0.0';
+    const VERSION = '2.0.1';
     // Sizes are the bytes sent over the wire; tests/static.test.cjs keeps them in sync.
     const DOWNLOADS = [
-        {file: 'websockets-doom.wasm.gz', bytes: 733009, wasm: true},
+        {file: 'websockets-doom.wasm.gz', bytes: 761005, wasm: true},
         {file: 'freedm.wad.gz', bytes: 8513298, as: 'freedm.wad'},
-        {file: 'fragline.wad', bytes: 68196, as: 'fragline.wad'},
+        {file: 'fragline.wad', bytes: 213981, as: 'fragline.wad'},
     ];
     const MAPS = ['Tech Test', 'Natural Station', 'Issues of Claveria', 'Steel', 'Dense Fields', 'Temple of Ammon',
         'Main Stronghold', 'Artifact Base', 'Industrial Outland', 'Detached Grounds', 'Isolated Facility',
@@ -147,6 +147,7 @@
             // Modern layout: WASD, arrows turn, Ctrl/click fire, E use, Alt strafe, Shift run.
             key_right: 77, key_left: 75, key_up: 17, key_down: 31, key_strafeleft: 30, key_straferight: 32,
             key_fire: 29, key_use: 18, key_strafe: 56, key_speed: 42,
+            key_jump: 57, key_lookup: 73, key_lookdown: 81, key_lookcenter: 71, mouseb_jump: -1,
             use_mouse: 1, mouseb_fire: 0, mouseb_strafe: -1, mouseb_forward: -1,
             mouse_sensitivity_y: setting('set-look'),
             // Controller (Crispy's native analog gamepad support): see joystick_physical_button* below.
@@ -167,8 +168,7 @@
             joystick_physical_button0: 22, joystick_physical_button1: 0, joystick_physical_button2: 2,
             joystick_physical_button3: 7, joystick_physical_button4: 9, joystick_physical_button5: 10,
             joystick_physical_button6: 6, joystick_physical_button7: 4,
-            key_jump: 57, key_lookup: 73, key_lookdown: 81, key_lookcenter: 71,
-            mouseb_use: 1, mouseb_jump: -1, mouseb_prevweapon: 4, mouseb_nextweapon: 3,
+            mouseb_use: 1, mouseb_prevweapon: 4, mouseb_nextweapon: 3,
             crispy_uncapped: fps === 35 ? 0 : 1, crispy_fpslimit: fps === 35 ? 0 : fps, crispy_vsync: 1,
             crispy_widescreen: 1, crispy_smoothscaling: 1,
             crispy_mouselook: 1, crispy_freelook: 2, crispy_freeaim: 1, crispy_jump: 1, crispy_pitch: 1, crispy_centerweapon: 1,

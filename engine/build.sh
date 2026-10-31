@@ -31,6 +31,9 @@ flags=(
   -sUSE_SDL=2 -sUSE_SDL_MIXER=2 '-sSDL2_MIXER_FORMATS=[]'
 )
 link=(
+  # Doom calls state actions through one pointer type with extra arguments; WebAssembly traps on
+  # that mismatch (e.g. A_Explode when a rocket hits), so let Emscripten adapt the calls.
+  -sEMULATE_FUNCTION_POINTER_CASTS=1
   -sASYNCIFY -sASYNCIFY_STACK_SIZE=65536
   -sINITIAL_MEMORY=134217728 -sALLOW_MEMORY_GROWTH=1
   -sFORCE_FILESYSTEM=1 -sINVOKE_RUN=0 -sEXIT_RUNTIME=0
