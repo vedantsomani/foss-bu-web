@@ -283,9 +283,12 @@ export function spawnPlayer(world, p) {
 // ---------------------------------------------------------------- ray tracing
 // Returns {s, kind:'none'|'wall'|'player', target, x,y,z}. (dx,dy,dz) must be a unit vector.
 // posFn(id) -> {x,y,z} gives (possibly rewound) player positions.
+// Floors and ceilings are tested per sector along the ray (split at every two-sided line it crosses), so a shot can leave
+// its own sector: aiming down off a ledge or up out of a pit is not stopped by the *origin* sector's floor/ceiling plane.
+const _rayX = [];
 export function traceRay(world, ox, oy, oz, dx, dy, dz, range, shooterId, posFn, extraR = 0, skipId = -1) {
   const prep = world.prep, F = world.sectorFloor, C = world.sectorCeil;
-  let best = range, kind = 'none', target = -1;
+  let best = range, kind = 'none', target = -1, nx = 0;
   // walls
   for (let i = 0; i < prep.lines.length; i++) {
     const l = prep.lines[i];
@@ -297,11 +300,21 @@ export function traceRay(world, ox, oy, oz, dx, dy, dz, range, shooterId, posFn,
     const z = oz + dz * s;
     if (l.oneSided) { best = s; kind = 'wall'; continue; }
     if (z < Math.max(F[l.fs], F[l.bs]) || z > Math.min(C[l.fs], C[l.bs])) { best = s; kind = 'wall'; }
+    else if (s > 0) _rayX[nx++] = s;
   }
-  // floor / ceiling of origin sector
-  const osec = sectorAt(prep, ox, oy);
-  if (dz < -1e-9) { const s = (F[osec] - oz) / dz; if (s > 0 && s < best) { best = s; kind = 'wall'; } }
-  else if (dz > 1e-9) { const s = (C[osec] - oz) / dz; if (s > 0 && s < best) { best = s; kind = 'wall'; } }
+  // floor / ceiling of every sector the ray passes through (only needed when it is not horizontal)
+  if (dz < -1e-9 || dz > 1e-9) {
+    for (let i = 1; i < nx; i++) { const v = _rayX[i]; let j = i - 1; while (j >= 0 && _rayX[j] > v) { _rayX[j + 1] = _rayX[j]; j--; } _rayX[j + 1] = v; }
+    let s0 = 0;
+    for (let k = 0; k <= nx && s0 < best; k++) {
+      const s1 = k < nx ? Math.min(_rayX[k], best) : best;
+      if (s1 - s0 < 1e-6) continue;
+      const m = (s0 + s1) * 0.5, sec = sectorAt(prep, ox + dx * m, oy + dy * m);
+      const sp = (dz < 0 ? F[sec] : C[sec]) - oz, st = sp / dz;
+      if (st > 0 && st >= s0 && st < s1) { best = st; kind = 'wall'; break; }
+      s0 = s1;
+    }
+  }
   // players (vertical cylinders)
   const R = RADIUS + extraR;
   for (const id of sortedIds(world)) {
@@ -349,6 +362,16 @@ export function damagePlayer(world, victim, amount, attacker, weapon) {
 }
 const rollDmg = (world, d) => d.base * (1 + Math.floor(rand(world) * d.mult));
 
+// can an explosion at (x,y,z) see any of the player's body (feet / centre / head)? Walls, floors and ceilings block it.
+const _noPlayers = () => null;
+function splashReaches(world, x, y, z, pl) {
+  for (const h of [HEIGHT / 2, HEIGHT - 4, 4]) {
+    const tx = pl.x - x, ty = pl.y - y, tz = pl.z + h - z, d = Math.hypot(tx, ty, tz);
+    if (d < 1) return true;
+    if (traceRay(world, x, y, z, tx / d, ty / d, tz / d, d, -1, _noPlayers).kind === 'none') return true;
+  }
+  return false;
+}
 function explode(world, proj, x, y, z, directTarget) {
   const def = WEAPONS[proj.w].proj;
   world.events.push({ t: 'explode', x, y, z, w: proj.w });
@@ -360,6 +383,7 @@ function explode(world, proj, x, y, z, directTarget) {
     const dist = Math.hypot(x - cx, y - cy, z - cz);
     const d = Math.max(0, dist - RADIUS);
     if (d >= def.splashRadius) continue;
+    if (!splashReaches(world, x, y, z, pl)) continue;   // like Doom's radius attack: no damage through walls
     const dmg = Math.floor(def.splash * (1 - d / def.splashRadius));
     if (dmg <= 0) continue;
     const taken = damagePlayer(world, pl, dmg, proj.owner, proj.w);
@@ -393,9 +417,9 @@ function weaponCommand(world, p, inp, opts) {
   }
   const fireDown = (inp.buttons & BTN.FIRE) !== 0, edge = fireDown && !(p.lastButtons & BTN.FIRE);
   const d = WEAPONS[p.weapon];
-  if (p.wstate === WS.READY && p.cooldown === 0 && (d.auto ? fireDown : edge)) {
-    if (hasAmmo(p, p.weapon)) shoot(world, p, inp, d, opts);
-    else if (edge) { const b = bestWeapon(p); if (b !== p.weapon) beginSwitch(p, b); }
+  if (p.wstate === WS.READY && p.cooldown === 0) {
+    if (hasAmmo(p, p.weapon)) { if (d.auto ? fireDown : edge) shoot(world, p, inp, d, opts); }
+    else if (fireDown) { const b = bestWeapon(p); if (b !== p.weapon) beginSwitch(p, b); }   // out of ammo: fall back (also while fire is merely held)
   }
   p.lastButtons = inp.buttons;
 }

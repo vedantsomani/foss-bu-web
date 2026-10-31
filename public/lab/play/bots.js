@@ -70,6 +70,54 @@ export class Nav {
     this.count = qt;
     this.nodes = Array.from(this.queue.subarray(0, qt));
     this.q2 = new Int32Array(N);
+    // hub[n] = 1 when n can walk to the main connected region (the largest strongly connected set of nodes). Anything else is a
+    // trap (e.g. a spawn on a ledge higher than a bot may drop from): bots standing there leave by walking straight to the nearest hub node.
+    this.hub = new Uint8Array(N);
+    { const gw = this.gw, E = this.edges, ns = this.nodes, comp = new Int32Array(N).fill(-1), seenF = new Uint8Array(N), order = [], stack = [], it = new Uint8Array(N);
+      for (const r of ns) {   // pass 1: iterative DFS over forward edges, record finishing order
+        if (seenF[r]) continue; seenF[r] = 1; stack.push(r);
+        while (stack.length) {
+          const a = stack[stack.length - 1]; let adv = false;
+          while (it[a] < 8) {
+            const d = it[a]++; if (!(E[a] & (1 << d))) continue;
+            const b = a + DIRS[d][1] * gw + DIRS[d][0]; if (!seenF[b]) { seenF[b] = 1; stack.push(b); adv = true; break; }
+          }
+          if (!adv) { stack.pop(); order.push(a); }
+        }
+      }
+      let nc = 0, bestC = -1, bestSize = 0;
+      for (let k = order.length - 1; k >= 0; k--) {   // pass 2: flood over reversed edges in reverse finishing order = one SCC each
+        const r = order[k]; if (comp[r] >= 0) continue;
+        comp[r] = nc; stack.push(r); let size = 0;
+        while (stack.length) {
+          const b = stack.pop(); size++; const bx = b % gw, by = Math.floor(b / gw);
+          for (let d = 0; d < 8; d++) {
+            const ax = bx - DIRS[d][0], ay = by - DIRS[d][1]; if (ax < 0 || ay < 0 || ax >= gw || ay >= this.gh) continue;
+            const a = ay * gw + ax; if (comp[a] < 0 && (E[a] & (1 << d))) { comp[a] = nc; stack.push(a); }
+          }
+        }
+        if (size > bestSize) { bestSize = size; bestC = nc; }
+        nc++;
+      }
+      const q = this.q2; let h = 0, t = 0;   // everything that can reach the main region
+      for (const n of ns) if (comp[n] === bestC) { this.hub[n] = 1; q[t++] = n; }
+      while (h < t) {
+        const b = q[h++], bx = b % gw, by = Math.floor(b / gw);
+        for (let d = 0; d < 8; d++) {
+          const ax = bx - DIRS[d][0], ay = by - DIRS[d][1]; if (ax < 0 || ay < 0 || ax >= gw || ay >= this.gh) continue;
+          const a = ay * gw + ax; if (!this.hub[a] && (E[a] & (1 << d))) { this.hub[a] = 1; q[t++] = a; }
+        }
+      } }
+  }
+  // nearest hub node (not above the bot's step height); -1 when none
+  nearestHub(x, y, z) {
+    let best = -1, bd = 1e12;
+    for (const n of this.nodes) {
+      if (!this.hub[n] || this.floor[n] > z + S.STEP_MAX) continue;
+      const d = (this.cx(n) - x) ** 2 + (this.cy(n) - y) ** 2;
+      if (d < bd) { bd = d; best = n; }
+    }
+    return best;
   }
   nodeAt(x, y) {
     const gx = Math.round((x - this.minX) / STEP), gy = Math.round((y - this.minY) / STEP);
@@ -148,7 +196,7 @@ export class BotManager {
     this.names[id] = name;
     this.bots.push({ id, peer, yaw: 0, pitch: 0, goalItem: -1, field: new Uint16Array(this.nav.N), fieldFor: -2, fieldT: -1e9,
       enemy: -1, seenAt: -1e9, lastSeen: { x: 0, y: 0 }, noiseYaw: 0, noisePitch: 0, noiseT: 0, strafe: 1, strafeT: 0,
-      stuckT: 0, lastX: 0, lastY: 0, unstick: 0, wantW: 0, wT: 0, fire: 0, acq: 0, wander: -1, dirX: 0, dirY: 0, thinkAt: Math.floor(Math.random() * 6),
+      escT: 0, escNode: -1, stuckT: 0, lastX: 0, lastY: 0, unstick: 0, wantW: 0, wT: 0, fire: 0, acq: 0, wander: -1, dirX: 0, dirY: 0, thinkAt: Math.floor(Math.random() * 6),
       inited: false });
   }
   itemField(i) {
@@ -270,6 +318,17 @@ export class BotManager {
       }
       const d = here >= 0 ? nav.descend(b.field, here) : -1;
       if (d >= 0) { mx = DIRS[d][0]; my = DIRS[d][1]; const L = Math.hypot(mx, my); mx /= L; my /= L; aimYaw = Math.atan2(my, mx); } else b.wander = -1;
+    }
+    // ---------- trapped (spawned on an isolated ledge / between nav nodes): walk straight out to the nearest connected node
+    if (!engaged && !mx && !my && nav.count > 1) {
+      const here = nav.nodeAt(p.x, p.y);
+      if (here < 0 || !nav.hub[here]) {
+        if (tick >= b.escT) { b.escT = tick + 30; b.escNode = nav.nearestHub(p.x, p.y, p.z); }
+        if (b.escNode >= 0) {
+          const tx = nav.cx(b.escNode) - p.x, ty = nav.cy(b.escNode) - p.y, L = Math.hypot(tx, ty);
+          if (L > 12) { mx = tx / L; my = ty / L; aimYaw = Math.atan2(my, mx); } else b.escT = 0;
+        }
+      }
     }
     // ---------- stuck handling
     if (tick % 45 === 0) {

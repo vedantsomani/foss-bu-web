@@ -1,6 +1,6 @@
 // settings.js - persisted per-viewer settings (localStorage is a convenience only; every access is guarded).
 const KEY = 'fragline.play.settings.v1';
-export const DEFAULTS = { sens: 2.5, invertY: false, fov: 90, volume: 0.7, quality: 'balanced', fpsCap: 0, showFps: true, dynRes: true, name: 'Player' };
+export const DEFAULTS = { sens: 2.5, padSens: 1, invertY: false, fov: 90, volume: 0.7, quality: 'balanced', fpsCap: 0, showFps: true, dynRes: true, name: 'Player' };
 // renderScale is the *maximum* scale; dynamic resolution may go lower.
 export const QUALITY = {
   performance: { renderScale: 0.6, bloom: false, maxLights: 6, dpr: 1, classic: false },

@@ -35,7 +35,7 @@ for (const sel of document.querySelectorAll('.mapsel')) for (let i = 1; i <= 32;
 const err = (id, m) => { $(id).textContent = m || ''; };
 
 // ---------------------------------------------------------------- settings UI
-const sUI = [['sSens', 'oSens', 'sens', v => (+v).toFixed(2)], ['sFov', 'oFov', 'fov', v => v + '°'], ['sVol', 'oVol', 'volume', v => Math.round(v * 100) + '%']];
+const sUI = [['sSens', 'oSens', 'sens', v => (+v).toFixed(2)], ['sPad', 'oPad', 'padSens', v => (+v).toFixed(2)], ['sFov', 'oFov', 'fov', v => v + '°'], ['sVol', 'oVol', 'volume', v => Math.round(v * 100) + '%']];
 function syncSettingsUI() {
   for (const [i, o, k, f] of sUI) { $(i).value = settings[k]; $(o).textContent = f(settings[k]); }
   $('sInvert').checked = settings.invertY; $('sQuality').value = settings.quality; $('sFps').value = String(settings.fpsCap); $('sDyn').checked = settings.dynRes; $('sShowFps').checked = settings.showFps;
@@ -193,8 +193,9 @@ function beginMatch({ session, map, wad, sprites, mapName, timeLimit, needClick 
   input.onScoreboard = v => { G.score = v; };
   vmResize(); addEventListener('resize', vmResize);
   show(); hud.show(true);
-  if (needClick && !input.forceActive) $('click').hidden = false;
-  else setTimeout(() => { if (G && !input.locked && !input.forceActive && $('pause').hidden) $('click').hidden = false; }, 900);   // pointer lock request did not succeed
+  // Controller players skip the "click to capture the mouse" overlay: they do not need pointer lock.
+  if (needClick && !input.forceActive && !input.padActive) $('click').hidden = false;
+  else setTimeout(() => { if (G && !input.locked && !input.forceActive && !input.padActive && $('pause').hidden) $('click').hidden = false; }, 900);   // pointer lock request did not succeed
   window.__fl = { get G() { return G; }, input, settings, audio, hud };
   requestAnimationFrame(frame);
 }
@@ -233,7 +234,7 @@ function onEvent(e, local) {
   const me = G.myId, now = G.lastNow / 1000;
   switch (e.t) {
     case 'fire':
-      if (local) { G.vmCtx.events.push(e); audio.play(FIRE_SOUND[e.w], undefined, undefined, undefined, 0.95, e.w === 3 ? 1.06 : 1); }
+      if (local) { G.vmCtx.events.push(e); audio.play(FIRE_SOUND[e.w], undefined, undefined, undefined, 0.95, e.w === 3 ? 1.06 : 1); input.rumble(FIRE_RUMBLE[e.w] || 0.3, 0.5, e.w === 3 ? 40 : 90); }
       else { audio.play(FIRE_SOUND[e.w], e.x, e.y, e.z, 1); light(e.x + 0, e.y, e.z, 240, [1, 0.75, 0.35], 1.3, 0.08); animOf(e.p).fireAt = now; }
       break;
     case 'jump': if (local) { G.vmCtx.events.push(e); audio.play('JUMP', undefined, undefined, undefined, 0.5); } else { const r = G.remotes[e.p]; if (r) audio.play('JUMP', r.x, r.y, r.z, 0.7); } break;
@@ -252,6 +253,7 @@ function onEvent(e, local) {
       if (e.target === me) {
         const a = G.remotes[e.p]; hud.damage(e.p !== me && a ? Math.atan2(a.y - G.L.y, a.x - G.L.x) : null, e.dmg);
         audio.play('PLPAIN', undefined, undefined, undefined, 0.9);
+        input.rumble(Math.min(1, e.dmg / 40), Math.min(1, e.dmg / 25), 160);
       } else {
         const t = G.remotes[e.target], an = animOf(e.target);
         if (t && now - an.hurtAt > 0.2) audio.play('PLPAIN', t.x, t.y, t.z, 0.9);
@@ -294,6 +296,49 @@ function onEvent(e, local) {
 // ---------------------------------------------------------------- frame
 const _cam = { x: 0, y: 0, z: 0, angle: 0, pitch: 0, fov: 90 };
 const WALK = ['A', 'B', 'C', 'D'], DEATH = 'HIJKLMN';
+const FIRE_RUMBLE = [0.15, 0.55, 0.8, 0.2, 0.7, 0.25, 1];   // per weapon id: pistol .. BFG
+
+// ---------------------------------------------------------------- controller
+// Polled every display frame (registered before the game loop, so the view angle is updated before rendering).
+// While menus are up the controller moves focus: D-pad / left stick up-down, A select, B back, left-right adjusts sliders.
+let padLast = 0, padNavAt = 0;
+function padMenu(pressed, y) {
+  const now = performance.now();
+  if (!$('click').hidden && (pressed & 1)) { $('click').hidden = true; audio.unlock(); return; }
+  const items = [...document.querySelectorAll('.screen:not([hidden]) button, .screen:not([hidden]) input, .screen:not([hidden]) select')]
+    .filter(el => el.offsetParent !== null && !el.disabled && el.type !== 'hidden');
+  if (!items.length) return;
+  let dir = pressed & (1 << 13) ? 1 : pressed & (1 << 12) ? -1 : 0;
+  if (!dir && Math.abs(y) > 0.6 && now - padNavAt > 220) dir = Math.sign(y);
+  if (dir) {
+    padNavAt = now;
+    const i = items.indexOf(document.activeElement);
+    items[i < 0 ? 0 : (i + dir + items.length) % items.length].focus();
+  }
+  const el = items.includes(document.activeElement) ? document.activeElement : null;
+  const lr = pressed & (1 << 15) ? 1 : pressed & (1 << 14) ? -1 : 0;
+  if (el && lr && (el.type === 'range' || el.tagName === 'SELECT')) {
+    if (el.type === 'range') el.value = +el.value + lr * (+el.step || 1) * 4;
+    else el.selectedIndex = Math.max(0, Math.min(el.options.length - 1, el.selectedIndex + lr));
+    el.dispatchEvent(new Event(el.type === 'range' ? 'input' : 'change', { bubbles: true }));
+  }
+  if (pressed & 1) {
+    const target = el || items[0];
+    if (target.type === 'checkbox') { target.checked = !target.checked; target.dispatchEvent(new Event('change', { bubbles: true })); }
+    else if (target.type !== 'range' && target.tagName !== 'SELECT') target.click();
+  }
+  if (pressed & 2) {
+    if (!$('settings').hidden) $('bSettingsClose').click();
+    else if (G && !$('pause').hidden) resume();
+  }
+}
+input.onPadMenu = padMenu;
+function padLoop(now) {
+  requestAnimationFrame(padLoop);
+  const dt = Math.min(0.05, (now - padLast) / 1000 || 0.016); padLast = now;
+  input.pollPad(dt);
+}
+requestAnimationFrame(padLoop);
 function frame(now) {
   requestAnimationFrame(frame);
   const g = G; if (!g) return;
@@ -319,7 +364,7 @@ function frame(now) {
   const lookDX = angDiff(input.yaw, g.lastYaw), lookDY = input.pitch - g.lastPitch; g.lastYaw = input.yaw; g.lastPitch = input.pitch;
   const vc = g.vmCtx, vp = vc.player;
   vp.x = L.x; vp.y = L.y; vp.z = L.z; vp.eyeZ = L.eyeZ; vp.yaw = input.yaw; vp.pitch = input.pitch;
-  vc.speed = Math.hypot(L.vx, L.vy); vc.grounded = L.grounded; vc.sprint = !!input.down.ShiftLeft; vc.lookDX = lookDX; vc.lookDY = lookDY;
+  vc.speed = Math.hypot(L.vx, L.vy); vc.grounded = L.grounded; vc.sprint = !!input.down.ShiftLeft || input.padSprint; vc.lookDX = lookDX; vc.lookDY = lookDY;
   vc.weapon = L.weapon; vc.wstate = L.wstate; vc.wtimer = L.wtimer; vc.stepOff = L.stepOff;
   const pose = VM.updateViewModel(g.vm, Math.min(dt, 0.05), vc);
   vc.events.length = 0;
