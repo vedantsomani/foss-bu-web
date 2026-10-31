@@ -575,7 +575,9 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
   let lastGpuMs = null, qHead = 0, qTail = 0, qCount = 0, qActive = -1;
 
   // camera frame used by the BSP walk / sprite code
-  let camX = 0, camY = 0, fwdX = 1, fwdY = 0, rgtX = 0, rgtY = -1, colMid = 0, colScale = 0, occlOn = false;
+  // doubles that change every frame live in a Float64Array (a closure `let` holding a double allocates a HeapNumber on each store)
+  const K = new Float64Array(16);
+  let occlOn = false;
   const COLS = 512, NEAR = 0.5;
   const cover = new Uint32Array(COLS >> 5);
   const order = new Int32Array(geo.nUnits + 1), stamp = new Int32Array(geo.nUnits + 1), secSeen = new Int32Array(nsec);
@@ -608,12 +610,12 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
       planes[(2 * i) * 4 + k] = VP[k * 4 + 3] + VP[k * 4 + i];
       planes[(2 * i + 1) * 4 + k] = VP[k * 4 + 3] - VP[k * 4 + i];
     }
-    camX = cam.x; camY = cam.y; fwdX = Math.cos(a); fwdY = Math.sin(a); rgtX = rx; rgtY = ry;
+    K[0] = cam.x; K[1] = cam.y; K[2] = Math.cos(a); K[3] = Math.sin(a); K[4] = rx; K[5] = ry;
     // Azimuth -> column mapping used for 1-D occlusion. T is the widest horizontal tangent of the (pitched) frustum, so every
     // visible ray maps inside [0, COLS); when looking so steeply that the frustum reaches the zenith the occluder is switched off.
     const den = cp - tanV * Math.abs(sp);
     occlOn = den > 0.08 && !opt.noOcclusion;
-    if (occlOn) { colMid = COLS * 0.5; colScale = COLS * 0.5 * den / (tanV * aspect); }
+    if (occlOn) { K[6] = COLS * 0.5; K[7] = COLS * 0.5 * den / (tanV * aspect); }
   }
 
   // ---- 1-D column coverage (Doom's solidsegs, as a bitset)
@@ -636,17 +638,16 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
     allCovered = true;
     for (let w = 0; w < cover.length; w++) if (cover[w] !== 0xffffffff) { allCovered = false; break; }
   }
-  let spLo = 0, spHi = 0;
   // column span of a wall segment; false when it is behind the camera
   function segSpan(x1, y1, x2, y2) {
-    let f1 = (x1 - camX) * fwdX + (y1 - camY) * fwdY, r1 = (x1 - camX) * rgtX + (y1 - camY) * rgtY;
-    let f2 = (x2 - camX) * fwdX + (y2 - camY) * fwdY, r2 = (x2 - camX) * rgtX + (y2 - camY) * rgtY;
+    let f1 = (x1 - K[0]) * K[2] + (y1 - K[1]) * K[3], r1 = (x1 - K[0]) * K[4] + (y1 - K[1]) * K[5];
+    let f2 = (x2 - K[0]) * K[2] + (y2 - K[1]) * K[3], r2 = (x2 - K[0]) * K[4] + (y2 - K[1]) * K[5];
     if (f1 < NEAR && f2 < NEAR) return false;
     if (f1 < NEAR) { const t = (NEAR - f1) / (f2 - f1); r1 += (r2 - r1) * t; f1 = NEAR; }
     else if (f2 < NEAR) { const t = (NEAR - f2) / (f1 - f2); r2 += (r1 - r2) * t; f2 = NEAR; }
-    const c1 = colMid + colScale * r1 / f1, c2 = colMid + colScale * r2 / f2;
-    if (c1 < c2) { spLo = c1; spHi = c2; } else { spLo = c2; spHi = c1; }
-    return spHi >= 0 && spLo <= COLS;
+    const c1 = K[6] + K[7] * r1 / f1, c2 = K[6] + K[7] * r2 / f2;
+    if (c1 < c2) { K[8] = c1; K[9] = c2; } else { K[8] = c2; K[9] = c1; }
+    return K[9] >= 0 && K[8] <= COLS;
   }
   function frustumBox(x0, y0, x1, y1, z0, z1) {
     for (let i = 0; i < 6; i++) {
@@ -655,22 +656,22 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
     }
     return true;
   }
-  let cLo = 0, cHi = 0, cBehind = 0;
+  let cBehind = 0;
   function corner(x, y) {
-    const f = (x - camX) * fwdX + (y - camY) * fwdY;
+    const f = (x - K[0]) * K[2] + (y - K[1]) * K[3];
     if (f < NEAR) { cBehind++; return; }
-    const c = colMid + colScale * ((x - camX) * rgtX + (y - camY) * rgtY) / f;
-    if (c < cLo) cLo = c; if (c > cHi) cHi = c;
+    const c = K[6] + K[7] * ((x - K[0]) * K[4] + (y - K[1]) * K[5]) / f;
+    if (c < K[10]) K[10] = c; if (c > K[11]) K[11] = c;
   }
   // can any part of this xy box (z range z0..z1) be visible?
   function boxVisible(x0, y0, x1, y1, z0, z1) {
     if (!frustumBox(x0, y0, x1, y1, z0, z1)) return false;
-    if (!occlOn || (camX >= x0 && camX <= x1 && camY >= y0 && camY <= y1)) return true;
-    cLo = 1e9; cHi = -1e9; cBehind = 0;
+    if (!occlOn || (K[0] >= x0 && K[0] <= x1 && K[1] >= y0 && K[1] <= y1)) return true;
+    K[10] = 1e9; K[11] = -1e9; cBehind = 0;
     corner(x0, y0); corner(x1, y0); corner(x1, y1); corner(x0, y1);
     if (cBehind === 4) return false;
     if (cBehind > 0) return true;
-    const a = Math.max(0, Math.floor(cLo)), b = Math.min(COLS - 1, Math.floor(cHi));
+    const a = Math.max(0, Math.floor(K[10])), b = Math.min(COLS - 1, Math.floor(K[11]));
     return a > b || !rangeCovered(a, b);
   }
   function visitSubsector(ss) {
@@ -685,18 +686,18 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
       const sg = sub.first + k, unit = sgUnit[sg];
       if (unit < 0) continue;
       const x1 = sgX1[sg], y1 = sgY1[sg], x2 = sgX2[sg], y2 = sgY2[sg];
-      if ((x2 - x1) * (camY - y1) - (y2 - y1) * (camX - x1) >= 0) continue;   // back-facing (front side is on the right of v1->v2)
+      if ((x2 - x1) * (K[1] - y1) - (y2 - y1) * (K[0] - x1) >= 0) continue;   // back-facing (front side is on the right of v1->v2)
       let hidden = false;
       if (occlOn) {
         if (!segSpan(x1, y1, x2, y2)) continue;
-        const a = Math.max(0, Math.floor(spLo)), b = Math.min(COLS - 1, Math.floor(spHi));
+        const a = Math.max(0, Math.floor(K[8])), b = Math.min(COLS - 1, Math.floor(K[9]));
         if (a > b || rangeCovered(a, b)) continue;
       }
       if (stamp[unit] !== stampN) { stamp[unit] = stampN; order[orderN++] = unit; }
       if (occlOn && !hidden) {
         const li = sgLd[sg], fs = ldFs[li], bs = ldBs[li];
         if (bs < 0 || fs < 0 || Math.min(liveC[fs], liveC[bs]) <= Math.max(liveF[fs], liveF[bs])) {   // one-sided wall or closed door/lift: solid
-          const a = Math.max(0, Math.ceil(spLo)), b = Math.min(COLS - 1, Math.ceil(spHi) - 1);
+          const a = Math.max(0, Math.ceil(K[8])), b = Math.min(COLS - 1, Math.ceil(K[9]) - 1);
           if (a <= b) markCovered(a, b);
         }
       }
@@ -714,7 +715,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
       if (b >= 0) { const o = b * 4; if (!boxVisible(nodeBox[o], nodeBox[o + 1], nodeBox[o + 2], nodeBox[o + 3], zLo, zHi)) continue; }
       if (c & 0x8000) { visitSubsector(c === 0xffff ? 0 : c & 0x7fff); continue; }
       const nd = nodes[c];
-      const side = (nd.dx * (camY - nd.y) - nd.dy * (camX - nd.x)) < 0 ? 0 : 1;   // 0: camera is on the right child's side
+      const side = (nd.dx * (K[1] - nd.y) - nd.dy * (K[0] - nd.x)) < 0 ? 0 : 1;   // 0: camera is on the right child's side
       stackC[sp] = side ? nd.right : nd.left; stackB[sp++] = c * 2 + (side ? 0 : 1);   // far side first ...
       stackC[sp] = side ? nd.left : nd.right; stackB[sp++] = c * 2 + (side ? 1 : 0);   // ... so the near side is popped (and clipped against) first
     }
@@ -747,13 +748,13 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
   let sprN = 0;
   function pushSprite(spr, x, y, z, light, fb, mask) {
     if (sprN >= MAX_SPRITES) return;
-    const dx = x - camX, dy = y - camY, depth = dx * fwdX + dy * fwdY;
+    const dx = x - K[0], dy = y - K[1], depth = dx * K[2] + dy * K[3];
     if (depth < -spr.w || depth > 6000) return;                          // behind the camera / too far
     const l = -spr.left, r = spr.w - spr.left, zt = z + spr.top, zb = zt - spr.h;
     const d = sprData, o = sprN * 4 * SPR_FLOATS;
     for (let k = 0; k < 4; k++) {
       const q = o + k * SPR_FLOATS, side = (k === 0 || k === 3) ? l : r, top = k >= 2;
-      d[q] = x + rgtX * side; d[q + 1] = y + rgtY * side; d[q + 2] = top ? zt : zb;
+      d[q] = x + K[4] * side; d[q + 1] = y + K[5] * side; d[q + 2] = top ? zt : zb;
       d[q + 3] = (k === 0 || k === 3) ? spr.u0 : spr.u1; d[q + 4] = top ? spr.v0 : spr.v1; d[q + 5] = light; d[q + 6] = fb; d[q + 7] = mask;
     }
     sprN++;
@@ -809,7 +810,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
   }
 
   function collectLights(dt, cam) {
-    const K = Math.min(16, opt.maxLights);
+    const maxL = Math.min(16, opt.maxLights);
     let n = 0;
     for (let i = 0; i < lightArr.length; i++) {
       const l = lightArr[i];
@@ -818,8 +819,8 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
         if (l.age >= l.ttl) { lightById.delete(l.id); lightArr[i] = lightArr[lightArr.length - 1]; lightArr.pop(); i--; continue; }
       }
       const score = Math.hypot(l.x - cam.x, l.y - cam.y) - l.radius;
-      if (n < K || score < selScore[n - 1]) {
-        let j = n < K ? n++ : K - 1;
+      if (n < maxL || score < selScore[n - 1]) {
+        let j = n < maxL ? n++ : maxL - 1;
         while (j > 0 && selScore[j - 1] > score) { selScore[j] = selScore[j - 1]; selLight[j] = selLight[j - 1]; j--; }
         selScore[j] = score; selLight[j] = l;
       }
@@ -1045,7 +1046,7 @@ export function createRenderer(canvas, wad, map, userOptions = {}) {
 
   return {
     setCamera, addLight, removeLight, updateLight, setEntities, render, resize, setOptions, setSectorHeights, setRenderScale,
-    stats: () => stat, dispose, _dbg: (q = []) => ({ ssinfo: q.map((i) => ({ i, box: Array.from(geo.ssBox.subarray(i * 4, i * 4 + 4)), sec: geo.ssSector[i], z: [secZLo[geo.ssSector[i]], secZHi[geo.ssSector[i]]], segs: subs[i], })), order: Array.from(order.subarray(0, orderN)), NL, nodes: nodes.length, zLo, zHi, planes: Array.from(planes), camX, camY, occlOn }),
+    stats: () => stat, dispose,
     options: opt, gl,
     info: () => ({ wallTextures: wallReg.entries.length, flats: flatReg.entries.length, staticSprites: staticThings.length, wallLayerSize: wallS, sky: skyName, bsp: haveBsp, dynamicSectors: geo.dynamic.reduce((a, b) => a + b, 0), geometry: { wall: geo.batches.wall.triangles, masked: geo.batches.masked.triangles, flat: geo.batches.flat.triangles, sky: geo.batches.sky.triangles } }),
   };
