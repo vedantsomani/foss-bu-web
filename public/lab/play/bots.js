@@ -247,7 +247,7 @@ export class BotManager {
         if (r.kind === 'player' && r.target === o.id) { bd = d; best = o; }
       }
       if (best) {
-        if (b.enemy !== best.id) { b.enemy = best.id; b.acq = tick + Math.round(30 * (1 - sk) + 8); }
+        if (b.enemy !== best.id) { b.enemy = best.id; b.acq = tick + Math.round(48 * (1 - sk) + 8); }
         b.seenAt = tick; b.lastSeen.x = best.x; b.lastSeen.y = best.y;
       } else if (tick - b.seenAt > 90) b.enemy = -1;
       // weapon choice
@@ -298,15 +298,17 @@ export class BotManager {
       let tx = en.x, ty = en.y, tz = en.z + 38;
       const dist = Math.hypot(tx - ex, ty - ey);
       if (wdef.kind === 'projectile') { const t = dist / wdef.proj.speed * sk; tx += en.vx * t; ty += en.vy * t; if (p.weapon === 4) tz = en.z + 6; }
-      if (tick >= b.noiseT) { b.noiseT = tick + 14; const n = 0.1 * (1 - sk) + 0.012; b.noiseYaw = (Math.random() * 2 - 1) * n; b.noisePitch = (Math.random() * 2 - 1) * n * 0.6; }
+      if (tick >= b.noiseT) { b.noiseT = tick + 14; const n = 0.16 * (1 - sk) + 0.012; b.noiseYaw = (Math.random() * 2 - 1) * n; b.noisePitch = (Math.random() * 2 - 1) * n * 0.6; }
       aimYaw = Math.atan2(ty - ey, tx - ex) + b.noiseYaw;
       aimPitch = Math.atan2(tz - ez, Math.hypot(tx - ex, ty - ey)) + b.noisePitch;
       // movement: keep a fighting distance, strafe
-      if (tick >= b.strafeT) { b.strafeT = tick + 30 + Math.floor(Math.random() * 50); b.strafe = Math.random() < 0.5 ? -1 : 1; }
+      // Strafing scales with skill: easy bots mostly stand and trade shots, hard bots dodge constantly.
+      if (tick >= b.strafeT) { b.strafeT = tick + 30 + Math.floor(Math.random() * 50); b.strafe = Math.random() < 0.15 + 0.85 * sk ? (Math.random() < 0.5 ? -1 : 1) : 0; }
+      const sa = 0.15 + 0.75 * sk * sk;
       const toX = (tx - ex) / (dist || 1), toY = (ty - ey) / (dist || 1);
       const want = p.weapon === 4 || p.weapon === 6 ? 380 : p.weapon === 2 || p.weapon === 1 ? 220 : 340;
       const fw = dist > want + 60 ? 1 : dist < want - 80 ? -0.7 : 0;
-      mx = toX * fw + toY * -b.strafe * 0.9; my = toY * fw + toX * b.strafe * 0.9;
+      mx = toX * fw + toY * -b.strafe * sa; my = toY * fw + toX * b.strafe * sa;
       // fire when roughly on target, after the reaction delay
       const err = Math.abs(angDiff(aimYaw, b.yaw));
       const tol = clamp(0.045 + 40 / (dist + 200) * 0.05 + (1 - sk) * 0.05, 0.04, 0.2);
@@ -351,7 +353,7 @@ export class BotManager {
     }
     // ---------- stuck handling
     if (tick % 45 === 0) {
-      if ((mx || my) && Math.hypot(p.x - b.lastX, p.y - b.lastY) < 10) { b.unstick = tick + 40; b.strafe = -b.strafe; if (b.goalItem >= 0 && Math.random() < 0.5) b.goalItem = -1; b.wander = -1; }
+      if ((mx || my) && Math.hypot(p.x - b.lastX, p.y - b.lastY) < 10) { b.unstick = tick + 40; b.strafe = b.strafe ? -b.strafe : (Math.random() < 0.5 ? -1 : 1); if (b.goalItem >= 0 && Math.random() < 0.5) b.goalItem = -1; b.wander = -1; }
       b.lastX = p.x; b.lastY = p.y;
     }
     let jump = 0;
