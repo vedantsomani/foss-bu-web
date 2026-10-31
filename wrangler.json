@@ -36,5 +36,25 @@
     }
   ],
   "account_id": "50652594c81ec9440bcc20ad76781df7",
-  "workers_dev": true
+  "workers_dev": true,
+  "previews": {
+    "durable_objects": {
+      "bindings": [
+        {
+          "name": "router",
+          "class_name": "Router"
+        }
+      ]
+    },
+    "ratelimits": [
+      {
+        "name": "ROOM_LIMITER",
+        "namespace_id": "1002",
+        "simple": {
+          "limit": 10,
+          "period": 60
+        }
+      }
+    ]
+  }
 }
