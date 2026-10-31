@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Fragline</title>
+<meta name="theme-color" content="#0d0b0a">
+<style>
+  :root { --bg:#0d0b0a; --surface:rgba(23,19,15,.9); --surface2:#211a14; --line:#3a2c21; --text:#f3ece4; --muted:#b5a797; --accent:#ff7a2f; --accent2:#ff9a4d; --ink:#1a0d05; --danger:#ff5b4b; --ok:#7bd88f;
+    --hud: "Bahnschrift","Segoe UI Semibold","Roboto Condensed","Arial Narrow",system-ui,sans-serif; color-scheme: dark; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  html,body { margin:0; height:100%; overflow:hidden; background:#000; color:var(--text); font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; user-select:none; -webkit-user-select:none; }
+  canvas { position:fixed; inset:0; width:100vw; height:100vh; display:block; }
+  #gl { cursor:none; background:#000; }
+  #vm { pointer-events:none; }
+
+  /* ---------- screens */
+  .screen { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px; overflow-y:auto; z-index:20;
+    background:radial-gradient(1200px 600px at 50% 110%, rgba(255,122,47,.18), transparent 60%), linear-gradient(#0d0b0a, #140f0b); }
+  .screen.over { background:rgba(10,8,6,.72); backdrop-filter:blur(6px); }
+  .logo { margin:0 0 4px; font:900 clamp(44px,9vw,92px)/1 var(--hud); letter-spacing:.05em; text-shadow:0 5px 0 #3a1406, 0 0 40px rgba(255,122,47,.25); }
+  .logo span { color:var(--accent); }
+  .sub { color:var(--muted); margin:0 0 28px; letter-spacing:.08em; text-transform:uppercase; font-size:12px; }
+  .cards { display:grid; grid-template-columns:repeat(3,minmax(0,300px)); gap:16px; width:min(100%,940px); justify-content:center; }
+  @media (max-width:980px){ .cards { grid-template-columns:minmax(0,420px); } }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px; display:flex; flex-direction:column; gap:10px; }
+  .card h2 { margin:0; font:800 18px var(--hud); letter-spacing:.06em; text-transform:uppercase; }
+  .card p { margin:0; color:var(--muted); font-size:13px; }
+  label.f { display:grid; grid-template-columns:104px 1fr; align-items:center; gap:8px; color:var(--muted); font-size:13px; }
+  label.f.chk { grid-template-columns:auto 1fr; }
+  select,input[type=text] { width:100%; background:#17120d; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; user-select:text; -webkit-user-select:text; }
+  input[type=text] { text-transform:lowercase; letter-spacing:.14em; font:600 16px ui-monospace,Menlo,Consolas,monospace; }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  input[type=checkbox] { accent-color:var(--accent); width:16px; height:16px; }
+  button { font:800 14px var(--hud); letter-spacing:.08em; text-transform:uppercase; border:0; border-radius:9px; padding:11px 16px; cursor:pointer; color:var(--ink); background:var(--accent); transition:transform .08s, background .12s; }
+  button:hover { background:var(--accent2); } button:active { transform:translateY(1px); }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); } button.ghost:hover { background:#2a2018; }
+  button.big { padding:15px 22px; font-size:17px; }
+  .row { display:flex; gap:10px; align-items:center; justify-content:center; flex-wrap:wrap; }
+  .foot { margin-top:22px; color:var(--muted); font-size:12px; text-align:center; max-width:760px; }
+  kbd { background:#2a2018; border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:1px 6px; font:600 11px ui-monospace,monospace; color:var(--text); }
+  .err { color:var(--danger); min-height:1.3em; margin-top:10px; font-size:13px; text-align:center; }
+  .code { font:800 clamp(34px,7vw,64px)/1 ui-monospace,Menlo,Consolas,monospace; letter-spacing:.2em; color:var(--accent); margin:8px 0 14px; user-select:text; -webkit-user-select:text; }
+  .slots { display:grid; gap:8px; width:min(100%,420px); margin:14px 0; }
+  .slot { display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--line); border-radius:9px; padding:10px 14px; font-weight:600; }
+  .slot i { width:10px; height:10px; border-radius:50%; background:#4a3b2e; } .slot.on i { background:var(--ok); box-shadow:0 0 10px var(--ok); } .slot.off { color:var(--muted); font-weight:400; }
+  .linkbox { display:flex; gap:8px; width:min(100%,520px); } .linkbox input { text-transform:none; letter-spacing:0; font:13px ui-monospace,monospace; }
+  .spin { width:34px; height:34px; border-radius:50%; border:3px solid #3a2c21; border-top-color:var(--accent); animation:spin .8s linear infinite; margin-bottom:14px; } @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* ---------- modal panels */
+  .modal { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:20px 22px; width:min(100%,460px); display:flex; flex-direction:column; gap:12px; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+  .modal h2 { margin:0 0 4px; font:800 20px var(--hud); letter-spacing:.08em; text-transform:uppercase; }
+  .modal output { color:var(--text); font-variant-numeric:tabular-nums; min-width:44px; text-align:right; }
+  .rng { display:grid; grid-template-columns:104px 1fr 48px; align-items:center; gap:8px; color:var(--muted); font-size:13px; }
+
+  /* ---------- HUD */
+  #hud { position:fixed; inset:0; pointer-events:none; z-index:10; font-family:var(--hud); font-weight:700; text-shadow:0 2px 6px rgba(0,0,0,.85), 0 0 2px rgba(0,0,0,.9); }
+  #crosshair { position:absolute; left:50%; top:50%; width:0; height:0; }
+  #crosshair i { position:absolute; background:#fff; box-shadow:0 0 0 1px rgba(0,0,0,.65); opacity:.92; }
+  #crosshair i:nth-child(1) { width:2px; height:9px; left:-1px; top:-17px; } #crosshair i:nth-child(2) { width:2px; height:9px; left:-1px; top:8px; }
+  #crosshair i:nth-child(3) { width:9px; height:2px; top:-1px; left:-17px; } #crosshair i:nth-child(4) { width:9px; height:2px; top:-1px; left:8px; }
+  #hitm { position:absolute; left:50%; top:50%; width:30px; height:30px; margin:-15px 0 0 -15px; opacity:0; }
+  #hitm::before,#hitm::after { content:""; position:absolute; left:14px; top:-3px; width:2px; height:36px; background:#fff; box-shadow:0 0 0 1px rgba(0,0,0,.6); transform:rotate(45deg); }
+  #hitm::after { transform:rotate(-45deg); } #hitm.kill::before,#hitm.kill::after { background:var(--danger); }
+  #dmg { position:absolute; left:50%; top:50%; width:0; height:0; }
+  #dmg i { position:absolute; left:-60px; top:-150px; width:120px; height:44px; opacity:0; transform-origin:60px 150px;
+    background:radial-gradient(ellipse 60px 22px at 50% 0%, rgba(255,40,30,.95), rgba(255,40,30,0) 70%); }
+  #pain { position:absolute; inset:0; opacity:0; background:radial-gradient(ellipse at center, rgba(160,0,0,0) 45%, rgba(190,10,10,.75) 100%); }
+  #top { position:absolute; top:12px; left:50%; transform:translateX(-50%); display:flex; gap:18px; align-items:baseline; padding:4px 16px; background:rgba(13,11,10,.55); border:1px solid rgba(255,255,255,.08); border-radius:9px; font-size:22px; letter-spacing:.06em; font-variant-numeric:tabular-nums; }
+  #top small { font-size:11px; color:var(--muted); letter-spacing:.14em; margin-right:5px; } #top b { color:var(--accent); }
+  #feed { position:absolute; top:14px; right:16px; display:flex; flex-direction:column; align-items:flex-end; gap:4px; font-size:15px; }
+  #feed div { background:rgba(13,11,10,.6); padding:3px 10px; border-radius:6px; border-right:3px solid var(--accent); animation:fin .15s ease-out; } #feed div.me { border-right-color:#fff; background:rgba(255,122,47,.28); }
+  #feed em { font-style:normal; color:var(--muted); font-weight:600; font-size:12px; margin:0 6px; letter-spacing:.06em; text-transform:uppercase; }
+  @keyframes fin { from { opacity:0; transform:translateX(12px); } }
+  #stats { position:absolute; left:22px; bottom:20px; display:flex; flex-direction:column; gap:2px; }
+  .stat { display:flex; align-items:baseline; gap:10px; font-variant-numeric:tabular-nums; }
+  .stat small { font-size:12px; letter-spacing:.18em; color:var(--muted); width:62px; }
+  .stat b { font-size:60px; line-height:.95; font-weight:800; letter-spacing:.02em; } .stat.armor b { font-size:34px; color:#7fb6ff; }
+  #hp.low { color:var(--danger); animation:pulse .6s infinite alternate; } @keyframes pulse { to { opacity:.55; } }
+  .bar { height:5px; width:210px; background:rgba(255,255,255,.14); border-radius:3px; overflow:hidden; } .bar i { display:block; height:100%; width:0; background:var(--accent); transform-origin:left; }
+  #ammoBox { position:absolute; right:22px; bottom:20px; text-align:right; }
+  #ammo { font-size:60px; line-height:.95; font-weight:800; font-variant-numeric:tabular-nums; } #wname { font-size:14px; letter-spacing:.2em; color:var(--accent2); text-transform:uppercase; margin-top:2px; }
+  #wslots { display:flex; gap:5px; justify-content:flex-end; margin-top:8px; }
+  #wslots div { width:30px; height:26px; border-radius:6px; background:rgba(13,11,10,.55); border:1px solid rgba(255,255,255,.1); color:var(--muted); font-size:13px; display:grid; place-items:center; }
+  #wslots div.own { color:var(--text); border-color:rgba(255,255,255,.3); } #wslots div.cur { background:var(--accent); color:var(--ink); border-color:var(--accent); text-shadow:none; } #wslots div.dry { opacity:.4; }
+  #center { position:absolute; left:50%; top:30%; transform:translateX(-50%); text-align:center; font-size:30px; letter-spacing:.1em; text-transform:uppercase; }
+  #center small { display:block; font-size:15px; color:var(--muted); letter-spacing:.14em; margin-top:6px; }
+  #toast { position:absolute; left:50%; bottom:130px; transform:translateX(-50%); font-size:16px; letter-spacing:.1em; text-transform:uppercase; color:var(--accent2); opacity:0; }
+  #fps { position:absolute; left:10px; top:8px; font:600 12px ui-monospace,Menlo,Consolas,monospace; color:#9fe6a6; white-space:pre; line-height:1.35; }
+  #score { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:min(92vw,560px); background:rgba(13,11,10,.82); border:1px solid var(--line); border-radius:12px; padding:14px 18px; backdrop-filter:blur(5px); }
+  #score h3 { margin:0 0 8px; font-size:13px; letter-spacing:.2em; color:var(--muted); text-transform:uppercase; }
+  #score table { width:100%; border-collapse:collapse; font-size:18px; font-variant-numeric:tabular-nums; } #score th { text-align:right; font-size:11px; letter-spacing:.16em; color:var(--muted); padding:2px 8px; } #score th:first-child,#score td:first-child { text-align:left; }
+  #score td { text-align:right; padding:5px 8px; border-top:1px solid rgba(255,255,255,.07); } #score tr.me td { color:var(--accent2); }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="vm"></canvas>
+
+<div id="hud" hidden>
+  <div id="pain"></div>
+  <div id="dmg"><i></i><i></i><i></i><i></i></div>
+  <div id="crosshair"><i></i><i></i><i></i><i></i></div>
+  <div id="hitm"></div>
+  <div id="top"><span><small>TIME</small><span id="timer">10:00</span></span><span><small>FRAGS</small><b id="myFrags">0</b></span><span><small>LEAD</small><span id="lead">-</span></span></div>
+  <div id="feed"></div>
+  <div id="stats">
+    <div class="stat"><small>HEALTH</small><b id="hp">100</b></div><div class="bar"><i id="hpBar"></i></div>
+    <div class="stat armor"><small>ARMOR</small><b id="ar">0</b></div>
+  </div>
+  <div id="ammoBox"><div id="ammo">50</div><div id="wname">Pistol</div><div id="wslots"></div></div>
+  <div id="center"></div>
+  <div id="toast"></div>
+  <div id="fps"></div>
+  <div id="score" hidden><h3 id="scoreTitle">Scoreboard</h3><table><thead><tr><th>Player</th><th>Frags</th><th>Deaths</th></tr></thead><tbody id="scoreBody"></tbody></table></div>
+</div>
+
+<!-- start screen -->
+<div class="screen" id="menu">
+  <h1 class="logo">FRAG<span>LINE</span></h1>
+  <p class="sub">From-scratch engine &middot; WebGL2 &middot; 60 Hz netcode</p>
+  <div class="cards">
+    <div class="card">
+      <h2>Practice</h2><p>Instant action against bots.</p>
+      <label class="f">Bots<select id="pBots"><option>1</option><option selected>2</option><option>3</option></select></label>
+      <label class="f">Skill<select id="pSkill"><option value="0.25">Easy</option><option value="0.55" selected>Normal</option><option value="0.85">Hard</option></select></label>
+      <label class="f">Map<select class="mapsel" id="pMap"></select></label>
+      <button class="big" id="bPractice">Play</button>
+    </div>
+    <div class="card">
+      <h2>Host room</h2><p>Friends join with a code or link.</p>
+      <label class="f">Players<select id="hMax"><option>2</option><option>3</option><option selected>4</option></select></label>
+      <label class="f">Map<select class="mapsel" id="hMap"></select></label>
+      <label class="f">Time limit<select id="hTime"><option value="5">5 min</option><option value="10" selected>10 min</option><option value="15">15 min</option></select></label>
+      <label class="f chk"><input type="checkbox" id="hBots" checked><span>Fill empty slots with bots</span></label>
+      <button class="big" id="bHost">Create room</button>
+    </div>
+    <div class="card">
+      <h2>Join room</h2><p>Enter the 8-character room code.</p>
+      <label class="f">Code<input type="text" id="jCode" maxlength="8" placeholder="abcd2345" autocomplete="off" spellcheck="false"></label>
+      <button class="big" id="bJoin">Join</button>
+      <button class="ghost" id="bSettings">Settings</button>
+    </div>
+  </div>
+  <div class="err" id="menuErr"></div>
+  <p class="foot"><kbd>WASD</kbd> move &nbsp; <kbd>Shift</kbd> sprint &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>E</kbd> use &nbsp; <kbd>Mouse</kbd> aim/fire &nbsp; <kbd>1</kbd>-<kbd>7</kbd>/wheel weapons &nbsp; <kbd>Tab</kbd> scores &nbsp; <kbd>Esc</kbd> menu</p>
+</div>
+
+<!-- lobby -->
+<div class="screen" id="lobby" hidden>
+  <p class="sub" id="lobbyTitle">Room</p>
+  <div class="code" id="lobbyCode">--------</div>
+  <div class="linkbox" id="lobbyLinkRow"><input type="text" id="lobbyLink" readonly><button id="bCopy">Copy link</button></div>
+  <div class="slots" id="slots"></div>
+  <div class="row"><button class="big" id="bStart">Start match</button><button class="ghost" id="bLobbyLeave">Leave</button></div>
+  <div class="err" id="lobbyErr"></div>
+</div>
+
+<div class="screen" id="loading" hidden><div class="spin"></div><div id="loadMsg">Loading...</div></div>
+
+<div class="screen over" id="click" hidden><h1 class="logo" style="font-size:54px">READY</h1><p class="sub">Click to capture the mouse and play</p><button class="big" id="bClick">Click to play</button></div>
+
+<div class="screen over" id="pause" hidden>
+  <div class="modal" style="align-items:stretch"><h2>Paused</h2>
+    <button class="big" id="bResume">Resume</button><button class="ghost" id="bPauseSettings">Settings</button><button class="ghost" id="bLeave">Leave match</button>
+  </div>
+</div>
+
+<div class="screen over" id="over" hidden>
+  <div class="modal" style="align-items:stretch"><h2 id="overTitle">Match over</h2><div id="overBody" style="font-size:18px"></div>
+    <button class="big" id="bOverLeave">Back to menu</button></div>
+</div>
+
+<div class="screen over" id="settings" hidden style="z-index:40">
+  <div class="modal"><h2>Settings</h2>
+    <label class="rng">Sensitivity<input type="range" id="sSens" min="0.2" max="8" step="0.05"><output id="oSens"></output></label>
+    <label class="f chk"><input type="checkbox" id="sInvert"><span>Invert Y axis</span></label>
+    <label class="rng">Field of view<input type="range" id="sFov" min="70" max="115" step="1"><output id="oFov"></output></label>
+    <label class="rng">Volume<input type="range" id="sVol" min="0" max="1" step="0.01"><output id="oVol"></output></label>
+    <label class="f">Quality<select id="sQuality"><option value="performance">Performance</option><option value="balanced">Balanced</option><option value="ultra">Ultra</option></select></label>
+    <label class="f">FPS cap<select id="sFps"><option value="0">Off</option><option value="60">60</option><option value="120">120</option><option value="144">144</option></select></label>
+    <label class="f chk"><input type="checkbox" id="sDyn"><span>Dynamic resolution</span></label>
+    <label class="f chk"><input type="checkbox" id="sShowFps"><span>Show FPS / ping</span></label>
+    <button class="big" id="bSettingsClose">Done</button>
+  </div>
+</div>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>
