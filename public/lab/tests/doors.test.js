@@ -350,7 +350,7 @@ test('FreeDM MAP01..MAP32: every door/lift/floor special fires, heights stay fin
   assert.ok(total > 100);
 });
 
-test('FreeDM MAP01: player bot with USE spam across 6000 ticks stays deterministic and out of walls; doors actually get used', () => {
+test('FreeDM MAP01: 4 bots with USE spam across 6000 ticks stay deterministic with finite state', () => {
   const map = wadjs.parseMap(wad, 'MAP01');
   const play = () => {
     const w = S.createWorld(map, 42); const ids = [1, 2, 3, 4]; ids.forEach(i => S.addPlayer(w, i));
