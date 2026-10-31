@@ -82,6 +82,17 @@ static opl_init_result_t InitDriver(opl_driver_t *_driver,
     driver = _driver;
     init_stage_reg_writes = 1;
 
+    // [fragline] The SDL driver is a software emulation, so there is always a
+    // chip to find. Skipping the detection sequence matters in the browser:
+    // it waits on audio callbacks, which do not run until the player has
+    // interacted with the page, and the game would hang at start-up.
+    if (_driver == &opl_sdl_driver)
+    {
+        init_stage_reg_writes = 0;
+        printf("OPL_Init: Using driver '%s'.\n", driver->name);
+        return OPL_INIT_OPL3;
+    }
+
     result1 = OPL_Detect();
     result2 = OPL_Detect();
     if (result1 == OPL_INIT_NONE || result2 == OPL_INIT_NONE)
