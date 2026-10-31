@@ -20,68 +20,128 @@
   <link rel="preload" href="freedm.wad.gz?v=2.0.0" as="fetch" crossorigin>
 </head>
 <body>
+  <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-mark" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 2v3.5M12 18.5V22M2 12h3.5M18.5 12H22M7 17L17 7"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.2v13.6a.6.6 0 0 0 .9.5l11-6.8a.6.6 0 0 0 0-1L8.9 4.7a.6.6 0 0 0-.9.5z" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M19 7h1M4 17h1M11 17h9"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></symbol>
+      <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.6a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1.1.9-1.1 1.7M12 17.2h.01"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+      <symbol id="i-install" viewBox="0 0 24 24"><path d="M12 4v11M8 11l4 4 4-4M5 20h14"/></symbol>
+      <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9.2A2 2 0 0 0 6.8 21h10.4a2 2 0 0 0 1.8-2.8L14 9V3M7.5 15h9"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3zM12 10v4M12 17h.01"/></symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+      <symbol id="i-pad" viewBox="0 0 24 24"><path d="M7 8h10a4 4 0 0 1 4 4v1.5a2.7 2.7 0 0 1-4.7 1.8L14.7 14H9.3l-1.6 1.3A2.7 2.7 0 0 1 3 13.5V12a4 4 0 0 1 4-4zM8 10.3v3M6.5 11.8h3M16 11.6h.01M18 13.2h.01"/></symbol>
+      <symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 9.5v5h3.5l4.5 4v-13l-4.5 4zM15.5 9a4 4 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+    </defs>
+  </svg>
+
   <div id="game" class="game">
     <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
 
     <section id="panel" class="panel">
-      <div class="brand-row">
-        <a class="brand" href="/">FRAG<span>LINE</span></a>
+      <div class="bg" aria-hidden="true">
+        <div class="bg-art"></div>
+        <div class="bg-glow"></div>
+        <div class="bg-sweep"></div>
+      </div>
+
+      <header class="brand-row">
+        <a class="brand" href="/"><svg class="i mark" aria-hidden="true"><use href="#i-mark"/></svg>FRAG<span>LINE</span></a>
         <div class="top-actions">
-          <button id="install-app" class="btn small ghost" type="button" hidden>Install app</button>
-          <button id="fullscreen" class="btn small ghost" type="button">Full screen</button>
+          <button id="install-app" class="btn small ghost" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-install"/></svg>Install app</button>
+          <button id="fullscreen" class="btn small ghost" type="button"><svg class="i" aria-hidden="true"><use href="#i-expand"/></svg>Full screen</button>
         </div>
-      </div>
+      </header>
 
-      <div id="screen-home" class="screen" hidden>
-        <h1 class="logo">FRAG<span>LINE</span></h1>
-        <p class="lead">Retro deathmatch. Modern feel. Up to four players, right in your browser.</p>
-        <nav class="menu" aria-label="Main menu">
-          <button id="new-match" class="btn primary wide" type="button">Play</button>
-          <form id="join-form" class="join" novalidate>
-            <input id="room-code" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ROOM CODE" aria-label="Room code" aria-describedby="room-error">
-            <button class="btn" type="submit">Join</button>
-          </form>
-          <p id="room-error" class="error" role="status"></p>
-          <button id="open-settings" class="btn wide" type="button">Settings</button>
-          <button id="open-help" class="btn wide" type="button">How to play</button>
-        </nav>
-        <div class="field name-field">
-          <label for="player-name">Player name</label>
-          <div class="row">
-            <input id="player-name" maxlength="20" autocomplete="nickname" spellcheck="false">
-            <button id="random-name" class="btn ghost icon" type="button" aria-label="Random name" title="Random name">↻</button>
+      <div id="screen-home" class="screen home" hidden>
+        <div class="hero">
+          <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span>Free online deathmatch</p>
+          <h1 class="logo">FRAG<span>LINE</span></h1>
+          <p class="lead">Retro deathmatch. Modern feel. Up to four players, right in your browser.</p>
+          <nav class="menu" aria-label="Main menu">
+            <button id="new-match" class="tile primary" type="button">
+              <span class="tile-ico"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg></span>
+              <span class="tile-text"><strong>Play</strong><small>Host a room or practice solo</small></span>
+              <svg class="i tile-go" aria-hidden="true"><use href="#i-arrow"/></svg>
+            </button>
+            <form id="join-form" class="join" novalidate>
+              <label class="mini-label" for="room-code">Got an invite? Enter the room code</label>
+              <div class="join-box">
+                <input id="room-code" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ROOM CODE" aria-describedby="room-error">
+                <button class="btn" type="submit">Join</button>
+              </div>
+            </form>
+            <p id="room-error" class="error" role="status"></p>
+            <button id="open-settings" class="tile" type="button">
+              <span class="tile-ico"><svg class="i" aria-hidden="true"><use href="#i-sliders"/></svg></span>
+              <span class="tile-text"><strong>Settings</strong><small>Graphics, controls and sound</small></span>
+              <svg class="i tile-go" aria-hidden="true"><use href="#i-arrow"/></svg>
+            </button>
+            <button id="open-help" class="tile" type="button">
+              <span class="tile-ico"><svg class="i" aria-hidden="true"><use href="#i-help"/></svg></span>
+              <span class="tile-text"><strong>How to play</strong><small>Controls, controller and tips</small></span>
+              <svg class="i tile-go" aria-hidden="true"><use href="#i-arrow"/></svg>
+            </button>
+          </nav>
+          <a class="lab-link" href="/lab/play/"><svg class="i" aria-hidden="true"><use href="#i-flask"/></svg><span>Try the next-gen engine (beta)</span><svg class="i go" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+        </div>
+
+        <aside class="side" aria-label="Player and match info">
+          <div class="profile name-field">
+            <span id="avatar" class="avatar" aria-hidden="true">?</span>
+            <div class="profile-main">
+              <label for="player-name">Player name</label>
+              <input id="player-name" maxlength="20" autocomplete="nickname" spellcheck="false">
+            </div>
+            <button id="random-name" class="icon-btn" type="button" aria-label="Random name" title="Random name"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg></button>
           </div>
-        </div>
+          <ul class="facts" aria-label="Game features">
+            <li><b>32</b><span>maps</span></li>
+            <li><b>2&ndash;4</b><span>players</span></li>
+            <li><b>120</b><span>Hz ready</span></li>
+          </ul>
+        </aside>
       </div>
 
-      <div id="screen-create" class="screen" hidden>
-        <h2>New match</h2>
+      <div id="screen-create" class="screen card" hidden>
+        <header class="card-head"><p class="eyebrow">Host a match</p><h2>New match</h2></header>
         <div class="grid">
-          <label class="field">Map
+          <div class="field full">
+            <label id="lbl-map" for="match-map">Map</label>
             <select id="match-map"></select>
-          </label>
-          <label class="field">Players
-            <select id="match-players">
-              <option value="2" selected>2 players</option>
-              <option value="3">3 players</option>
-              <option value="4">4 players</option>
+          </div>
+          <div class="field full">
+            <span id="lbl-players" class="label">Players</span>
+            <select id="match-players" aria-labelledby="lbl-players">
+              <option value="2" data-label="2" data-sub="players" selected>2 players</option>
+              <option value="3" data-label="3" data-sub="players">3 players</option>
+              <option value="4" data-label="4" data-sub="players">4 players</option>
             </select>
-          </label>
-          <label class="field">Time limit
-            <select id="match-time">
-              <option value="5">5 minutes</option>
-              <option value="10" selected>10 minutes</option>
-              <option value="15">15 minutes</option>
-              <option value="20">20 minutes</option>
-              <option value="0">No limit</option>
+          </div>
+          <div class="field full">
+            <span id="lbl-time" class="label">Time limit</span>
+            <select id="match-time" aria-labelledby="lbl-time">
+              <option value="5" data-label="5" data-sub="min">5 minutes</option>
+              <option value="10" data-label="10" data-sub="min" selected>10 minutes</option>
+              <option value="15" data-label="15" data-sub="min">15 minutes</option>
+              <option value="20" data-label="20" data-sub="min">20 minutes</option>
+              <option value="0" data-label="&infin;" data-sub="no limit">No limit</option>
             </select>
-          </label>
-          <label class="field">Mode
-            <select id="match-mode">
-              <option value="deathmatch" selected>Deathmatch</option>
-              <option value="altdeath">Deathmatch 2.0 (items respawn)</option>
+          </div>
+          <div class="field full">
+            <span id="lbl-mode" class="label">Mode</span>
+            <select id="match-mode" aria-labelledby="lbl-mode">
+              <option value="deathmatch" data-label="Deathmatch" data-sub="Classic" selected>Deathmatch</option>
+              <option value="altdeath" data-label="Deathmatch 2.0" data-sub="Items respawn">Deathmatch 2.0 (items respawn)</option>
             </select>
-          </label>
+          </div>
         </div>
         <div class="actions">
           <button id="create-room" class="btn primary" type="button">Create room</button>
@@ -90,68 +150,72 @@
         </div>
       </div>
 
-      <div id="screen-settings" class="screen wide-screen" hidden>
-        <h2>Settings</h2>
+      <div id="screen-settings" class="screen card wide-screen" hidden>
+        <header class="card-head"><h2>Settings</h2></header>
+        <div class="tabs" role="tablist" aria-label="Settings sections">
+          <button id="tab-video" class="tab" type="button" role="tab" aria-selected="true" aria-controls="pane-video"><svg class="i" aria-hidden="true"><use href="#i-monitor"/></svg>Video</button>
+          <button id="tab-controls" class="tab" type="button" role="tab" aria-selected="false" aria-controls="pane-controls" tabindex="-1"><svg class="i" aria-hidden="true"><use href="#i-pad"/></svg>Controls</button>
+          <button id="tab-audio" class="tab" type="button" role="tab" aria-selected="false" aria-controls="pane-audio" tabindex="-1"><svg class="i" aria-hidden="true"><use href="#i-sound"/></svg>Sound</button>
+        </div>
         <div class="settings">
-          <fieldset>
-            <legend>Graphics</legend>
-            <label class="field">Quality
-              <select id="set-graphics">
-                <option value="ultra">Ultra: high resolution, true color, smooth lighting</option>
-                <option value="high">High: high resolution, classic palette</option>
-                <option value="performance">Performance: original resolution</option>
+          <div id="pane-video" class="pane" role="tabpanel" aria-labelledby="tab-video">
+            <div class="field">
+              <span id="lbl-graphics" class="label">Quality</span>
+              <select id="set-graphics" aria-labelledby="lbl-graphics">
+                <option value="ultra" data-label="Ultra" data-hint="High resolution, true color, smooth lighting">Ultra: high resolution, true color, smooth lighting</option>
+                <option value="high" data-label="High" data-hint="High resolution, classic palette">High: high resolution, classic palette</option>
+                <option value="performance" data-label="Performance" data-hint="Original resolution">Performance: original resolution</option>
               </select>
-            </label>
-            <label class="field">Frame rate
-              <select id="set-fps">
-                <option value="0">Match display (60, 120, 144 Hz…)</option>
-                <option value="60">Cap at 60 FPS</option>
-                <option value="35">Classic 35 FPS</option>
+            </div>
+            <div class="field">
+              <span id="lbl-fps" class="label">Frame rate</span>
+              <select id="set-fps" aria-labelledby="lbl-fps">
+                <option value="0" data-label="Display" data-hint="Match your display (60, 120, 144 Hz&hellip;)">Match display (60, 120, 144 Hz…)</option>
+                <option value="60" data-label="60 FPS" data-hint="Cap at 60 FPS">Cap at 60 FPS</option>
+                <option value="35" data-label="35 FPS" data-hint="Classic 35 FPS">Classic 35 FPS</option>
               </select>
-            </label>
-            <label class="field">HUD
-              <select id="set-hud">
-                <option value="minimal">Minimal (full view)</option>
-                <option value="classic">Classic status bar</option>
+            </div>
+            <div class="field">
+              <span id="lbl-hud" class="label">HUD</span>
+              <select id="set-hud" aria-labelledby="lbl-hud">
+                <option value="minimal" data-label="Minimal" data-hint="Full view, status at the screen edges">Minimal (full view)</option>
+                <option value="classic" data-label="Classic" data-hint="Classic status bar">Classic status bar</option>
               </select>
-            </label>
-            <label class="check"><input type="checkbox" id="set-crosshair"> Crosshair</label>
-            <label class="check"><input type="checkbox" id="set-showfps"> Show FPS</label>
-            <label class="check"><input type="checkbox" id="set-fullscreen"> Go full screen when a match starts</label>
-          </fieldset>
-          <fieldset>
-            <legend>Mouse and keys</legend>
+            </div>
+            <label class="check"><span>Crosshair</span><input type="checkbox" id="set-crosshair"></label>
+            <label class="check"><span>Show FPS</span><input type="checkbox" id="set-showfps"></label>
+            <label class="check"><span>Go full screen when a match starts</span><input type="checkbox" id="set-fullscreen"></label>
+          </div>
+          <div id="pane-controls" class="pane" role="tabpanel" aria-labelledby="tab-controls" hidden>
+            <h3>Mouse and keys</h3>
             <label class="field">Turn sensitivity <output for="set-sens"></output>
               <input type="range" id="set-sens" min="1" max="20" step="1">
             </label>
             <label class="field">Look sensitivity <output for="set-look"></output>
               <input type="range" id="set-look" min="1" max="20" step="1">
             </label>
-            <label class="check"><input type="checkbox" id="set-invert"> Invert mouse look</label>
-            <label class="check"><input type="checkbox" id="set-autorun"> Always run</label>
-          </fieldset>
-          <fieldset>
-            <legend>Sound</legend>
-            <label class="check"><input type="checkbox" id="set-sound"> Sound effects</label>
+            <label class="check"><span>Invert mouse look</span><input type="checkbox" id="set-invert"></label>
+            <label class="check"><span>Always run</span><input type="checkbox" id="set-autorun"></label>
+            <h3>Controller</h3>
+            <label class="check"><span>Enable controller</span><input id="controller-enabled" type="checkbox" checked></label>
+            <div class="field">
+              <span id="lbl-deadzone" class="label">Stick deadzone</span>
+              <select id="controller-deadzone" aria-labelledby="lbl-deadzone"><option value="0.15" data-label="Small">Small</option><option value="0.25" data-label="Normal" selected>Normal</option><option value="0.4" data-label="Large">Large</option></select>
+            </div>
+            <p id="controller-status" class="small" role="status">Connect a controller and press a button.</p>
+          </div>
+          <div id="pane-audio" class="pane" role="tabpanel" aria-labelledby="tab-audio" hidden>
+            <label class="check"><span>Sound effects</span><input type="checkbox" id="set-sound"></label>
             <label class="field">Volume <output for="set-volume"></output>
               <input type="range" id="set-volume" min="0" max="15" step="1">
             </label>
-          </fieldset>
-          <fieldset>
-            <legend>Controller</legend>
-            <label class="check"><input id="controller-enabled" type="checkbox" checked> Enable controller</label>
-            <label class="field">Stick deadzone
-              <select id="controller-deadzone"><option value="0.15">Small</option><option value="0.25" selected>Normal</option><option value="0.4">Large</option></select>
-            </label>
-            <p id="controller-status" class="small" role="status">Connect a controller and press a button.</p>
-          </fieldset>
+          </div>
         </div>
-        <p class="small muted">Changes apply to the next match.</p>
-        <div class="actions"><button class="btn primary" type="button" data-home>Done</button></div>
+        <div class="actions"><button class="btn primary" type="button" data-home>Done</button><p class="small muted note">Changes apply to the next match.</p></div>
       </div>
 
-      <div id="screen-help" class="screen wide-screen" hidden>
-        <h2>How to play</h2>
+      <div id="screen-help" class="screen card wide-screen" hidden>
+        <header class="card-head"><h2>How to play</h2></header>
         <div class="help">
           <dl>
             <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Move and strafe</dd>
@@ -165,7 +229,7 @@
             <dt><kbd>T</kbd></dt><dd>Chat</dd>
             <dt><kbd>Esc</kbd></dt><dd>Game menu</dd>
           </dl>
-          <div>
+          <div class="notes">
             <p><strong>Controller:</strong> left stick moves, right stick turns, RT fires, A jumps, X uses, LB/RB change weapon, Start opens the menu.</p>
             <p>Every player's browser runs the whole game and a small relay passes moves between players. Keep the tab open and in front: a hidden tab pauses the match for everyone.</p>
             <p>Install Fragline as an app from the top-right button (where your browser supports it) to play in its own window.</p>
@@ -174,13 +238,14 @@
         <div class="actions"><button class="btn primary" type="button" data-home>Back</button></div>
       </div>
 
-      <div id="screen-wait" class="screen" hidden>
+      <div id="screen-wait" class="screen card center" hidden>
+        <div class="spinner" aria-hidden="true"></div>
         <h2 id="wait-title">Checking room…</h2>
       </div>
 
-      <div id="screen-join" class="screen" hidden>
-        <h2>Join match <span id="join-code" class="code"></span></h2>
-        <p id="join-players" class="muted"></p>
+      <div id="screen-join" class="screen card" hidden>
+        <header class="card-head"><p class="eyebrow">You're invited</p><h2>Join match <span id="join-code" class="code chip"></span></h2></header>
+        <p id="join-players" class="pill"></p>
         <label class="field name-field">Your name
           <input id="join-name" maxlength="20" autocomplete="nickname" spellcheck="false">
         </label>
@@ -190,34 +255,40 @@
         </div>
       </div>
 
-      <div id="screen-lobby" class="screen" hidden>
-        <h2 id="lobby-heading">Room ready</h2>
-        <p class="code big" id="lobby-code" aria-label="Room code"></p>
+      <div id="screen-lobby" class="screen card" hidden>
+        <header class="card-head"><p class="eyebrow">Lobby</p><h2 id="lobby-heading">Room ready</h2></header>
+        <div class="code-plate">
+          <span class="mini-label">Room code</span>
+          <p class="code big" id="lobby-code" aria-label="Room code"></p>
+        </div>
         <div id="lobby-share" class="share">
           <input id="lobby-link" readonly aria-label="Invite link">
-          <button id="copy-link" class="btn" type="button">Copy link</button>
-          <button id="share-link" class="btn" type="button" hidden>Share</button>
+          <button id="copy-link" class="btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy link</span></button>
+          <button id="share-link" class="btn" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-share"/></svg><span>Share</span></button>
         </div>
         <p id="lobby-count" class="count" role="status"></p>
-        <p id="lobby-status" class="muted" role="status"></p>
+        <ul id="lobby-slots" class="slots" hidden></ul>
+        <p class="status-line"><span class="live-dot" aria-hidden="true"></span><span id="lobby-status" class="muted" role="status"></span></p>
         <p id="lobby-hint" class="muted small"></p>
         <div class="actions"><button class="btn ghost" type="button" data-home>Leave</button></div>
       </div>
 
-      <div id="screen-message" class="screen" hidden>
+      <div id="screen-message" class="screen card center" hidden>
+        <svg class="i big-ico" aria-hidden="true"><use href="#i-alert"/></svg>
         <h2 id="message-title"></h2>
         <p id="message-text" class="muted"></p>
         <div class="actions"><button class="btn primary" type="button" data-home>Back to menu</button></div>
       </div>
 
-      <div id="loader" class="loader" role="status">
-        <div class="track"><div id="load-bar" class="bar"></div></div>
-        <p id="load-text">Downloading game data…</p>
+      <div class="dock">
+        <div id="loader" class="loader" role="status">
+          <div class="loader-row"><p id="load-text">Downloading game data…</p><span id="load-pct" class="pct">0%</span></div>
+          <div class="track"><div id="load-bar" class="bar"></div></div>
+        </div>
+        <footer class="footer">
+          <a href="credits.html">Credits &amp; licenses</a><span aria-hidden="true">·</span><a href="https://github.com/vedantsomani/foss-bu-web">Source code</a>
+        </footer>
       </div>
-
-      <footer class="footer">
-        <a href="credits.html">Credits &amp; licenses</a> · <a href="https://github.com/vedantsomani/foss-bu-web">Source code</a>
-      </footer>
     </section>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

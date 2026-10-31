@@ -50,6 +50,7 @@
     function show(screen) {
         for (const el of document.querySelectorAll('#panel > .screen')) el.hidden = el.id !== `screen-${screen}`;
         $('panel').hidden = false;
+        document.body.dataset.screen = screen;
         const focusable = $(`screen-${screen}`).querySelector('[autofocus], button, input, select');
         focusable?.focus({preventScroll: true});
     }
@@ -67,7 +68,11 @@
     function toast(text, ms = 4000) {
         const el = $('toast');
         el.textContent = text;
+        el.dataset.kind = /drop|lost|fail|not available|could not/i.test(text) ? 'warn' : /copied|reconnected/i.test(text) ? 'ok' : '';
         el.hidden = false;
+        el.style.animation = 'none';
+        void el.offsetWidth; // restart the slide-in
+        el.style.animation = '';
         clearTimeout(toastTimer);
         toastTimer = setTimeout(() => { el.hidden = true; }, ms);
     }
@@ -122,6 +127,7 @@
         for (const el of document.querySelectorAll('input[type=range]')) {
             const out = document.querySelector(`output[for="${el.id}"]`);
             if (out) out.textContent = el.value;
+            el.style.setProperty('--fill', `${(el.value - el.min) / (el.max - el.min) * 100}%`);
         }
         $('fps-meter').hidden = !setting('set-showfps') || !state.started;
     }
@@ -165,6 +171,7 @@
     function renderProgress() {
         const done = Math.min(loadedBytes / totalBytes, 1);
         $('load-bar').style.transform = `scaleX(${done})`;
+        $('load-pct').textContent = `${Math.floor(done * 100)}%`;
         $('load-text').textContent = done < 1
             ? `Downloading game data · ${(loadedBytes / 1048576).toFixed(1)} of ${(totalBytes / 1048576).toFixed(1)} MB`
             : 'Starting engine…';
@@ -461,6 +468,152 @@
             document.execCommand('copy');
         }
         toast('Invite link copied.');
+        const button = $('copy-link');
+        const label = button.querySelector('span');
+        const icon = button.querySelector('use');
+        button.classList.add('done');
+        label.textContent = 'Copied';
+        icon.setAttribute('href', '#i-check');
+        setTimeout(() => { button.classList.remove('done'); label.textContent = 'Copy link'; icon.setAttribute('href', '#i-copy'); }, 2000);
+    }
+
+    // ---------- Menu polish (UI only) ----------
+
+    const visibleActions = () => Array.from(document.querySelectorAll('#panel button, #panel input, #panel select'))
+        .filter(el => el.getClientRects().length && !el.disabled);
+
+    // Turn a <select> into a segmented control. The select stays in the DOM as the
+    // source of truth (values, saved settings, tests); the buttons just drive it.
+    function segmented(id) {
+        const select = $(id);
+        const group = document.createElement('div');
+        group.className = 'seg';
+        group.setAttribute('role', 'radiogroup');
+        group.setAttribute('aria-labelledby', select.getAttribute('aria-labelledby'));
+        const hint = Array.from(select.options).some(o => o.dataset.hint) ? document.createElement('p') : null;
+        if (hint) hint.className = 'seg-hint';
+        const buttons = Array.from(select.options).map(option => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'seg-btn';
+            button.setAttribute('role', 'radio');
+            const main = document.createElement('b');
+            main.textContent = option.dataset.label || option.text;
+            button.append(main);
+            if (option.dataset.sub) {
+                const sub = document.createElement('small');
+                sub.textContent = option.dataset.sub;
+                button.append(sub);
+            }
+            button.addEventListener('click', () => {
+                if (select.value === option.value) return;
+                select.value = option.value;
+                select.dispatchEvent(new Event('change', {bubbles: true}));
+            });
+            group.append(button);
+            return button;
+        });
+        const sync = () => buttons.forEach((button, i) => {
+            const on = select.selectedIndex === i;
+            button.setAttribute('aria-checked', String(on));
+            button.tabIndex = on ? 0 : -1;
+            if (on && hint) hint.textContent = select.options[i].dataset.hint || '';
+        });
+        group.addEventListener('keydown', event => {
+            const step = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[event.key];
+            if (!step) return;
+            event.preventDefault();
+            const next = (select.selectedIndex + step + buttons.length) % buttons.length;
+            buttons[next].click();
+            buttons[next].focus();
+        });
+        select.addEventListener('change', sync);
+        select.classList.add('seg-source');
+        select.tabIndex = -1;
+        select.setAttribute('aria-hidden', 'true');
+        select.before(group);
+        if (hint) select.before(hint);
+        // The controller d-pad focuses every visible select: hop over this hidden one.
+        select.addEventListener('focus', event => {
+            const list = visibleActions();
+            const at = list.indexOf(select), from = list.indexOf(event.relatedTarget);
+            const target = from === -1 ? buttons[select.selectedIndex] : list[from < at ? at + 1 : at - 1] || buttons[select.selectedIndex];
+            target.focus();
+        });
+        sync();
+    }
+
+    function settingsTabs() {
+        const tabs = Array.from(document.querySelectorAll('#screen-settings [role=tab]'));
+        const open = tab => tabs.forEach(t => {
+            const on = t === tab;
+            t.setAttribute('aria-selected', String(on));
+            t.tabIndex = on ? 0 : -1;
+            $(t.getAttribute('aria-controls')).hidden = !on;
+        });
+        tabs.forEach((tab, i) => {
+            tab.addEventListener('click', () => open(tab));
+            tab.addEventListener('keydown', event => {
+                const step = {ArrowRight: 1, ArrowLeft: -1}[event.key];
+                if (!step) return;
+                event.preventDefault();
+                const next = tabs[(i + step + tabs.length) % tabs.length];
+                open(next);
+                next.focus();
+            });
+        });
+    }
+
+    // Player slots mirror the "N of M players connected" text.
+    function lobbySlots() {
+        const count = $('lobby-count'), list = $('lobby-slots');
+        const render = () => {
+            const m = /(\d+) of (\d+)/.exec(count.textContent);
+            list.hidden = !m;
+            if (!m) { list.replaceChildren(); return; }
+            const have = Number(m[1]), max = Number(m[2]);
+            if (list.children.length !== max) {
+                list.replaceChildren(...Array.from({length: max}, (_, i) => {
+                    const li = document.createElement('li');
+                    li.className = 'slot';
+                    li.innerHTML = '<span class="slot-ico"></span><span><b></b><span></span></span>';
+                    li.querySelector('.slot-ico').textContent = String(i + 1);
+                    li.querySelector('b').textContent = i === 0 ? 'Host' : `Player ${i + 1}`;
+                    return li;
+                }));
+            }
+            Array.from(list.children).forEach((li, i) => {
+                li.classList.toggle('filled', i < have);
+                li.querySelector('span:last-child span').textContent = i < have ? 'Connected' : 'Waiting…';
+            });
+        };
+        new MutationObserver(render).observe(count, {childList: true, characterData: true, subtree: true});
+        render();
+    }
+
+    function avatar() {
+        const field = $('player-name'), badge = $('avatar');
+        const update = () => { badge.textContent = (field.value.trim()[0] || '?').toUpperCase(); };
+        field.addEventListener('input', update);
+        $('random-name').addEventListener('click', update);
+        update();
+    }
+
+    // Slow pointer parallax on the menu backdrop; skipped for touch and reduced motion.
+    function parallax() {
+        if (matchMedia('(prefers-reduced-motion: reduce), (hover: none)').matches) return;
+        const art = document.querySelector('#panel .bg-art');
+        let frame = 0, x = 0, y = 0;
+        addEventListener('pointermove', event => {
+            x = event.clientX / innerWidth - 0.5;
+            y = event.clientY / innerHeight - 0.5;
+            if (frame || $('panel').hidden) return;
+            frame = requestAnimationFrame(() => {
+                frame = 0;
+                art.style.setProperty('--px', x.toFixed(3));
+                art.style.setProperty('--py', y.toFixed(3));
+            });
+        }, {passive: true});
     }
 
     // ---------- Page extras ----------
@@ -540,6 +693,11 @@
 
     function start() {
         bindSettings();
+        for (const id of ['match-players', 'match-time', 'match-mode', 'set-graphics', 'set-fps', 'set-hud', 'controller-deadzone']) segmented(id);
+        settingsTabs();
+        lobbySlots();
+        avatar();
+        parallax();
         renderProgress();
         $('new-match').addEventListener('click', () => show('create'));
         $('open-settings').addEventListener('click', () => { state.back = 'home'; show('settings'); });

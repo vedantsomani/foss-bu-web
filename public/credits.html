@@ -1,26 +1,51 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="doc">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Fragline credits</title>
+  <meta name="theme-color" content="#0a0807">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css?v=2.0.0">
 </head>
 <body>
-  <main class="info" style="display:block;max-width:760px">
-    <h1 class="logo" style="font-size:40px">FRAG<span>LINE</span></h1>
-    <p><a href="/">Back to the game</a></p>
-    <h2>Game data: FreeDM</h2>
-    <p>Maps, sounds and graphics come from FreeDM by the Freedoom contributors, under a BSD-style license. <a href="FreeDM-COPYING.txt">License</a> · <a href="FreeDM-CREDITS.txt">Contributors</a> · <a href="FreeDM-CREDITS-MUSIC.txt">Music credits</a></p>
-    <h2>Engine: Chocolate Doom (WebAssembly)</h2>
-    <p>GNU GPL v2. <a href="ENGINE-LICENSE.txt">License</a> · <a href="ENGINE-SOURCE-AND-CREDITS.txt">Binary provenance, corresponding source and changes</a></p>
-    <h2>Browser networking</h2>
-    <p>The WebSocket networking build and the room-relay design come from Cloudflare's multiplayer Doom project. <a href="CLOUDFLARE-LICENSE.txt">BSD 3-clause license</a></p>
-    <h2>Libraries</h2>
-    <p>nipplejs 0.9.0 (touch joysticks), MIT license, in <code>vendor/</code>.</p>
-    <h2>Fragline</h2>
-    <p>The Fragline title art, lobby, relays and controller support are this project's own work. <a href="https://github.com/vedantsomani/foss-bu-web">Source code</a></p>
+  <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false"><defs>
+    <symbol id="i-mark" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 2v3.5M12 18.5V22M2 12h3.5M18.5 12H22M7 17L17 7"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+  </defs></svg>
+  <div class="bg" aria-hidden="true"><div class="bg-art"></div><div class="bg-glow"></div></div>
+  <main class="info">
+    <header class="info-head">
+      <a class="brand" href="/"><svg class="i mark" aria-hidden="true"><use href="#i-mark"/></svg>FRAG<span>LINE</span></a>
+      <a class="btn small ghost" href="/"><svg class="i" aria-hidden="true"><use href="#i-arrow"/></svg>Back to the game</a>
+    </header>
+    <h1>Credits &amp; licenses</h1>
+    <p class="lead">Fragline stands on free and open-source work. Thank you to everyone below.</p>
+
+    <section class="card">
+      <h2>Game data: FreeDM</h2>
+      <p>Maps, sounds and graphics come from FreeDM by the Freedoom contributors, under a BSD-style license.</p>
+      <p class="links"><a href="FreeDM-COPYING.txt">License</a><a href="FreeDM-CREDITS.txt">Contributors</a><a href="FreeDM-CREDITS-MUSIC.txt">Music credits</a></p>
+    </section>
+    <section class="card">
+      <h2>Engine: Chocolate Doom (WebAssembly)</h2>
+      <p>GNU GPL v2.</p>
+      <p class="links"><a href="ENGINE-LICENSE.txt">License</a><a href="ENGINE-SOURCE-AND-CREDITS.txt">Binary provenance, corresponding source and changes</a></p>
+    </section>
+    <section class="card">
+      <h2>Browser networking</h2>
+      <p>The WebSocket networking build and the room-relay design come from Cloudflare's multiplayer Doom project.</p>
+      <p class="links"><a href="CLOUDFLARE-LICENSE.txt">BSD 3-clause license</a></p>
+    </section>
+    <section class="card">
+      <h2>Libraries</h2>
+      <p>nipplejs 0.9.0 (touch joysticks), MIT license, in <code>vendor/</code>.</p>
+    </section>
+    <section class="card">
+      <h2>Fragline</h2>
+      <p>The Fragline title art, lobby, relays and controller support are this project's own work.</p>
+      <p class="links"><a href="https://github.com/vedantsomani/foss-bu-web">Source code</a></p>
+    </section>
   </main>
 </body>
 </html>
