@@ -7,9 +7,10 @@
 import { WEAPONS, SPRITE_FRAMES } from './weapons.js';
 
 export const VW = 320, VH = 200;       // virtual Doom screen
-const SWITCH_TICKS = 10, SWITCH_DROP = 110;
+const SWITCH_TICKS = 10, SWITCH_DROP = 110, CLASSIC_DROP = 96;   // vanilla: 6 px/tic from WEAPONTOP 32 to WEAPONBOTTOM 128
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
-const smooth = t => t * t * (3 - 2 * t);
+const smooth = t => t * t * (3 - 2 * t), smoothLin = t => t;
+const CLASSIC_FLASH = { 0: 7, 1: 12, 2: 12, 3: 7, 4: 26, 5: 7, 6: 34 };   // vanilla flash lengths (tics -> 60 Hz ticks)
 
 // Semi-implicit damped spring. Returns [pos, vel].
 export function spring(pos, vel, target, k, c, dt) {
@@ -29,8 +30,22 @@ const SEQ = {
   5: [[0, 3], [1, 20]],
   6: [[1, 10], [2, 10], [1, 10], [0, 8]],
 };
-export function fireFrame(weapon, shots, t, cooldownSec) {
-  const seq = SEQ[weapon] || [[0, 1]];
+// Exact vanilla frame sequences (gun frame index, tics at 35 Hz); used by the classic ruleset
+const SEQ_CLASSIC = {
+  0: [[0, 4], [1, 6], [2, 4], [1, 5]],
+  1: [[0, 3], [0, 7], [1, 5], [2, 5], [3, 4], [2, 5], [1, 5], [0, 3], [0, 7]],
+  2: [[0, 3], [0, 7], [1, 7], [2, 7], [3, 7], [4, 7], [5, 7], [6, 6], [7, 6], [0, 5]],
+  3: [[0, 4]],
+  4: [[1, 20]],
+  5: [[0, 3], [1, 3]],
+  6: [[1, 20], [2, 10], [1, 10], [0, 20]],
+};
+// Doom's weapon/view bob (p_user.c / p_pspr.c): bob = min(16, (speed per tic)^2 / 4); weapon x = bob*cos(2pi t/64), y = bob*sin(pi (t%32)/32)
+export function classicBob(speed) { const v = speed / 35; return Math.min(16, v * v / 4); }
+export function classicWeaponBob(bob, tics) { return { x: bob * Math.cos(2 * Math.PI * tics / 64), y: bob * Math.sin(Math.PI * (tics % 32) / 32) }; }
+export function classicViewBob(bob, tics) { return bob / 2 * Math.sin(2 * Math.PI * tics / 20); }
+export function fireFrame(weapon, shots, t, cooldownSec, classic = false) {
+  const seq = (classic && SEQ_CLASSIC[weapon]) || SEQ[weapon] || [[0, 1]];
   if (weapon === 3) return t < cooldownSec ? shots % 2 : 0;
   const total = seq.reduce((a, s) => a + s[1], 0), scale = Math.min(cooldownSec, total / 35) / total;
   let acc = 0;
@@ -41,20 +56,20 @@ export function fireFrame(weapon, shots, t, cooldownSec) {
 export function createViewModel() {
   return { t: 0, phase: 0, bobAmp: 0, swayX: 0, swayVX: 0, swayY: 0, swayVY: 0, land: 0, landV: 0,
     kick: 0, kickV: 0, kickRot: 0, kickRotV: 0, camKick: 0, camKickV: 0, fireT: 99, flashT: 99, shots: 0, weapon: 0,
-    drop: 0, out: [], lastYaw: null, lastPitch: null, side: 1 };
+    drop: 0, out: [], lastYaw: null, lastPitch: null, side: 1, classic: false, bob: 0, tics: 0, switchTicks: SWITCH_TICKS };
 }
 
 // ctx: { speed, grounded, sprint, lookDX, lookDY (radians moved this frame; sign = yaw/pitch delta), weapon, wstate, wtimer,
 //        events:[{t:'fire'|'land'|'jump'|'switch', v?}], player:{x,y,z,yaw,pitch} , stepOff }
 export function updateViewModel(vm, dt, ctx) {
   vm.t += dt;
-  vm.weapon = ctx.weapon ?? vm.weapon;
+  vm.weapon = ctx.weapon ?? vm.weapon; vm.classic = !!ctx.classic; vm.cooldownTicks = ctx.cooldownTicks || 0; vm.switchTicks = ctx.switchTicks || SWITCH_TICKS;
   const w = WEAPONS[vm.weapon];
   // ----- events
   for (const e of ctx.events || []) {
     if (e.t === 'fire') {
       vm.fireT = 0; vm.flashT = 0; vm.shots++;
-      vm.kickV += 180 * w.recoil; vm.kickRotV += (vm.side *= -1) * 0.5 * w.recoil; vm.camKickV += 0.35 * w.recoil;
+      if (!vm.classic) vm.kickV += 180 * w.recoil; if (!vm.classic) { vm.kickRotV += (vm.side *= -1) * 0.5 * w.recoil; vm.camKickV += 0.35 * w.recoil; } else vm.side *= -1;
       if (ctx.player) vm.out.push({ type: 'muzzle', ...muzzleWorldPos(ctx.player), w: vm.weapon, flashSec: w.flashTicks / 60 });
     } else if (e.t === 'land') vm.landV += clamp((e.v || 400) * 0.15, 12, 140);
     else if (e.t === 'jump') vm.landV -= 18;
@@ -76,29 +91,38 @@ export function updateViewModel(vm, dt, ctx) {
   [vm.kickRot, vm.kickRotV] = spring(vm.kickRot, vm.kickRotV, 0, 160, 14, dt);
   [vm.camKick, vm.camKickV] = spring(vm.camKick, vm.camKickV, 0, 90, 12, dt);
   vm.fireT += dt; vm.flashT += dt;
+  vm.tics += dt * 35;
+  // classic: bob follows the ground speed with vanilla's formula; air keeps the last value
+  if (vm.classic && ctx.grounded) vm.bob += (classicBob(ctx.speed) - vm.bob) * Math.min(1, dt * 12);
   // ----- lower / raise
-  if (ctx.wstate === 1) vm.drop = 1 - clamp((ctx.wtimer ?? 0) / SWITCH_TICKS, 0, 1);
-  else if (ctx.wstate === 2) vm.drop = clamp((ctx.wtimer ?? 0) / SWITCH_TICKS, 0, 1);
+  if (ctx.wstate === 1) vm.drop = 1 - clamp((ctx.wtimer ?? 0) / vm.switchTicks, 0, 1);
+  else if (ctx.wstate === 2) vm.drop = clamp((ctx.wtimer ?? 0) / vm.switchTicks, 0, 1);
   else vm.drop = 0;
   return computePose(vm, ctx.stepOff || 0);
 }
 
 export function computePose(vm, stepOff = 0) {
-  const w = WEAPONS[vm.weapon], b = bobOffset(vm.phase, vm.bobAmp);
-  const cooldownSec = w.cooldown / 60;
+  const w = WEAPONS[vm.weapon], b = vm.classic ? classicWeaponBob(vm.bob, vm.tics) : bobOffset(vm.phase, vm.bobAmp);
+  const cooldownSec = vm.classic && vm.cooldownTicks ? vm.cooldownTicks / 60 : w.cooldown / 60;
   const frames = SPRITE_FRAMES[vm.weapon];
-  const gi = vm.fireT < cooldownSec ? fireFrame(vm.weapon, vm.shots, vm.fireT, cooldownSec) : 0;
-  const flashing = vm.flashT < w.flashTicks / 60;
+  const gi = vm.fireT < cooldownSec ? fireFrame(vm.weapon, vm.shots, vm.fireT, cooldownSec, vm.classic) : 0;
+  const flashTicks = vm.classic ? (CLASSIC_FLASH[vm.weapon] || w.flashTicks) : w.flashTicks;
+  const flashing = vm.flashT < flashTicks / 60;
   let fi = 0;
   if (flashing) {
-    const n = frames.flash.length, p = vm.flashT / (w.flashTicks / 60);
+    const n = frames.flash.length, p = vm.flashT / (flashTicks / 60);
     fi = vm.weapon === 3 ? vm.shots % n : Math.min(n - 1, Math.floor(p * n));
+  }
+  if (vm.classic) {
+    return { x: b.x, y: b.y + smoothLin(vm.drop) * CLASSIC_DROP, rot: 0, scale: 1,
+      gunLump: frames.gun[Math.min(gi, frames.gun.length - 1)], flashLump: flashing ? frames.flash[fi] : null,
+      flashAlpha: 1, camPitch: 0, drop: vm.drop, weapon: vm.weapon };
   }
   return {
     x: b.x + vm.swayX, y: b.y + vm.swayY + vm.land + vm.kick - stepOff * 0.15 + smooth(vm.drop) * SWITCH_DROP,
     rot: vm.kickRot * 0.02, scale: 1 + vm.kick * 0.0015,
     gunLump: frames.gun[Math.min(gi, frames.gun.length - 1)], flashLump: flashing ? frames.flash[fi] : null,
-    flashAlpha: flashing ? 1 - clamp(vm.flashT / (w.flashTicks / 60), 0, 1) * 0.5 : 0,
+    flashAlpha: flashing ? 1 - clamp(vm.flashT / (flashTicks / 60), 0, 1) * 0.5 : 0,
     camPitch: vm.camKick * 0.012, drop: vm.drop, weapon: vm.weapon,
   };
 }
@@ -114,26 +138,27 @@ export function muzzleWorldPos(p, eye = 48) {
 // ------------------------------------------------------------------ drawing (DOM canvas 2D)
 // sprites: { LUMPNAME: {canvas|bitmap, width, height, left, top} }. w,h: canvas size in device pixels.
 export function drawViewModel(g, pose, sprites, w, h, opts = {}) {
-  const s = h / VH, ox = w / 2 - (VW / 2) * s;
+  const sy = opts.sy || h / VH, s = sy, sx = opts.sx || sy, ox = w / 2 - (VW / 2) * sx;
+  const vh = opts.vh || VH;   // virtual height of the view window: 200 full screen, 168 above the status bar
   g.save();
   g.imageSmoothingEnabled = false;
   const gun = sprites && sprites[pose.gunLump];
   if (!gun) { drawProceduralHands(g, pose, w, h); g.restore(); return; }
   const place = spr => {
-    const x = (1 - spr.left) + pose.x, y = 31.5 - spr.top + pose.y + (opts.baseline || 0);
+    const x = (1 - spr.left) + pose.x, y = vh / 2 - 68.5 - spr.top + pose.y + (opts.baseline || 0);
     g.save();
-    g.translate(ox + (x + spr.width / 2) * s, (y + spr.height) * s); // pivot at bottom centre of the sprite
+    g.translate(ox + (x + spr.width / 2) * sx, (y + spr.height) * sy); // pivot at bottom centre of the sprite
     g.rotate(pose.rot); g.scale(pose.scale, pose.scale);
-    g.translate(-(spr.width / 2) * s, -spr.height * s);
+    g.translate(-(spr.width / 2) * sx, -spr.height * sy);
     return spr;
   };
   const sp = place(gun);
-  g.drawImage(gun.canvas || gun.bitmap, 0, 0, sp.width * s, sp.height * s);
+  g.drawImage(gun.canvas || gun.bitmap, 0, 0, sp.width * sx, sp.height * sy);
   g.restore();
   if (pose.flashLump && sprites[pose.flashLump] && pose.drop < 0.05) {
     const f = sprites[pose.flashLump];
-    g.save(); g.globalAlpha = pose.flashAlpha; g.globalCompositeOperation = 'lighter';
-    const fs = place(f); g.drawImage(f.canvas || f.bitmap, 0, 0, fs.width * s, fs.height * s);
+    g.save(); g.globalAlpha = pose.flashAlpha; if (!opts.classicFlash) g.globalCompositeOperation = 'lighter';
+    const fs = place(f); g.drawImage(f.canvas || f.bitmap, 0, 0, fs.width * sx, fs.height * sy);
     g.restore(); g.restore();
   }
   g.restore();
