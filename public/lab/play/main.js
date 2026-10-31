@@ -188,7 +188,7 @@ function beginMatch({ session, map, wad, sprites, mapName, timeLimit, needClick 
     }
     return 0;
   };
-  input.enabled = true; input.onEscape = () => { if (performance.now() - G.menuAt < 200) return; if ($('pause').hidden) openPause(); else resume(); };
+  input.enabled = true; input.menu = false; input.onEscape = () => { if (performance.now() - G.menuAt < 200) return; if ($('pause').hidden) openPause(); else resume(); };
   input.onUnlock = () => { if (G && !G.over && $('click').hidden) openPause(); };
   input.onScoreboard = v => { G.score = v; };
   vmResize(); addEventListener('resize', vmResize);
@@ -200,12 +200,12 @@ function beginMatch({ session, map, wad, sprites, mapName, timeLimit, needClick 
   requestAnimationFrame(frame);
 }
 function openPause() {
-  if (!G || G.over) return; G.menuAt = performance.now(); G.paused = true; input.releaseAll();
+  if (!G || G.over) return; G.menuAt = performance.now(); G.paused = true; input.menu = true; input.releaseAll();
   if (G.session.solo) G.session.pause(true);
   input.unlock(); show('pause'); $('click').hidden = true;
 }
 function resume() {
-  if (!G) return; G.menuAt = performance.now(); G.paused = false; G.session.pause && G.session.pause(false);
+  if (!G) return; G.menuAt = performance.now(); G.paused = false; input.menu = false; G.session.pause && G.session.pause(false);
   $('settings').hidden = true; show(); input.lock(!document.fullscreenElement);
 }
 $('bResume').onclick = resume;
@@ -249,6 +249,7 @@ function onEvent(e, local) {
     }
     case 'impact': spawnFx(FX.puff, e.x, e.y, e.z, now); break;
     case 'hit': {
+      if (e.dmg <= 0) break;   // spawn protection / fully absorbed: no blood, pain flash or sound
       spawnFx(FX.blood, e.x, e.y, e.z, now);
       if (e.target === me) {
         const a = G.remotes[e.p]; hud.damage(e.p !== me && a ? Math.atan2(a.y - G.L.y, a.x - G.L.x) : null, e.dmg);
@@ -446,7 +447,7 @@ function hudFrame(g, s, L, rv, dt, t, now, sinceRender) {
     hud.fps(g.fpsText);
   }
   if (left <= 0 && !g.over) endMatch(rows(g, L, rv));
-  if (s.stalled && !g.over) { g.over = true; input.unlock(); $('overTitle').textContent = 'Connection lost'; $('overBody').textContent = 'The host is no longer responding.'; show('over'); }
+  if (s.stalled && !g.over) { g.over = true; input.menu = true; input.releaseAll(); input.unlock(); $('overTitle').textContent = 'Connection lost'; $('overBody').textContent = 'The host is no longer responding.'; show('over'); }
 }
 function rows(g, L, rv) {
   const out = [{ name: 'You', frags: L.frags, deaths: L.deaths, me: true }];
@@ -454,7 +455,7 @@ function rows(g, L, rv) {
   return out.sort((a, b) => b.frags - a.frags || a.deaths - b.deaths);
 }
 function endMatch(r) {
-  G.over = true; input.unlock(); const w = r[0];
+  G.over = true; input.menu = true; input.releaseAll(); input.unlock(); const w = r[0];
   $('overTitle').textContent = w.me ? 'You win!' : w.name + ' wins';
   $('overBody').textContent = r.map((x, i) => `${i + 1}. ${x.name}  -  ${x.frags} frags / ${x.deaths} deaths`).join('\n'); $('overBody').style.whiteSpace = 'pre-line';
   show('over');

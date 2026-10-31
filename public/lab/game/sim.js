@@ -871,6 +871,11 @@ export function runCommand(world, p, raw, dt, opts) {
   } else p.lastButtons = inp.buttons;
   if (inp.seq) p.lastSeq = inp.seq;
 }
+const _deadIn = { fwd: 0, side: 0, yaw: 0, pitch: 0, buttons: 0, weapon: 0 };
+function deadPhysics(world, p, dt) {
+  _deadIn.yaw = p.yaw; _deadIn.pitch = p.pitch;
+  moveCommand(world.prep, p, _deadIn, dt, null, world);
+}
 export function step(world, inputsByPlayer, dt = DT, opts = null) {
   world.events = [];
   for (const id of sortedIds(world)) {
@@ -883,7 +888,10 @@ export function step(world, inputsByPlayer, dt = DT, opts = null) {
   for (const id of sortedIds(world)) {
     const p = world.players[id];
     if (p.spawnProt > 0) p.spawnProt--;
-    if (!p.alive && p.respawn > 0 && --p.respawn === 0) spawnPlayer(world, p);
+    if (!p.alive) {
+      deadPhysics(world, p, dt);   // corpses fall, slide to a stop and ride lifts; they do not hang in mid-air
+      if (p.respawn > 0 && --p.respawn === 0) spawnPlayer(world, p);
+    }
   }
   if (world.auth) updateMovers(world);
   updateProjectiles(world, dt);

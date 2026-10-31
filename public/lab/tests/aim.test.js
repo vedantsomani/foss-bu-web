@@ -89,3 +89,18 @@ test('weapon: holding fire with an empty gun falls back to a weapon that has amm
   S.step(w, { 1: inp({}) }); S.step(w, { 1: inp({ buttons: BTN.FIRE }) });   // semi-auto: needs a fresh press
   assert.ok(a.ammo[1] < 5, 'and can shoot it');
 });
+
+test('corpses obey gravity (no hanging in mid-air), slide to a stop from knockback and stay on rising floors', () => {
+  const m = buildMap([{ x0: 0, y0: 0, x1: 600, y1: 400, ceil: 600 }], [dm(100, 100)]);
+  const w = S.createWorld(m, 1); const a = place(w, 1, 300, 200); a.z = 200; a.grounded = false;   // killed while in the air
+  a.alive = false; a.health = 0; a.respawn = 180;
+  for (let i = 0; i < 90; i++) S.step(w, {});
+  assert.ok(a.z === 0 && a.grounded, 'corpse fell to the floor: z=' + a.z);
+  a.vx = 400; a.vy = 0;
+  for (let i = 0; i < 40; i++) S.step(w, {});
+  assert.ok(a.x > 300 && Math.abs(a.vx) < 1, 'slid and stopped: x=' + a.x + ' vx=' + a.vx);
+  assert.ok(a.x < 590, 'and stayed inside the room');
+  // a lift raising the floor carries the corpse instead of burying it
+  w.sectorFloor[0] = 30; S.step(w, {});
+  assert.equal(a.z, 30);
+});

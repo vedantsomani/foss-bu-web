@@ -28,9 +28,12 @@ export class Input {
     this.pad = null; this.padPrev = 0; this.padActive = false; this.padFwd = 0; this.padSide = 0;
     this.padFire = false; this.padSprint = false; this.padScore = false;
     this.onPadMenu = null;   // (pressedBits, padStickY) while menus are up, set by main
+    this.menu = false; this.lockAt = -1e9;
     const el = document;
     el.addEventListener('mousemove', e => {
       if (!this.active) return;
+      // right after pointer lock engages the browser may report one big warp-to-centre delta: never turn the view with it
+      if (performance.now() - this.lockAt < 150) return;
       const k = 0.022 * this.s.sens * Math.PI / 180;
       this.yaw -= e.movementX * k;
       this.pitch -= e.movementY * k * (this.s.invertY ? -1 : 1);
@@ -57,12 +60,14 @@ export class Input {
     addEventListener('blur', () => this.releaseAll());
     document.addEventListener('pointerlockchange', () => {
       const was = this.locked; this.locked = document.pointerLockElement === canvas;
+      if (this.locked && !was) this.lockAt = performance.now();
       if (!this.locked) { this.releaseAll(); if (was && this.onUnlock) this.onUnlock(); }
     });
     document.addEventListener('pointerlockerror', () => { this.locked = false; });
   }
   // A controller player may never get pointer lock (gamepad presses are not a user gesture), so pad use also counts.
-  get active() { return this.enabled && (this.locked || this.forceActive || this.padActive); }
+  // `menu` is set by main while a menu / pause / end screen is up: input then drives the menus (pad) instead of the game.
+  get active() { return this.enabled && !this.menu && (this.locked || this.forceActive || this.padActive); }
   // Poll the first standard gamepad; call once per display frame. Look is applied straight to the view angles.
   pollPad(dt) {
     let p = null;
@@ -108,6 +113,7 @@ export class Input {
   // call inside a user gesture. Pointer lock first: requestFullscreen consumes the transient activation that pointer lock needs.
   lock(fullscreen = true) {
     const de = document.documentElement, c = this.canvas;
+    this.lockAt = performance.now();
     // unadjustedMovement (raw mouse) is not available everywhere (e.g. Chrome on Linux). A rejected request burns the user
     // activation, so remember the failure: the fallback then runs on the next click (the overlay is shown), not silently.
     const plain = () => { try { const r = c.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch { /* ignore */ } };
