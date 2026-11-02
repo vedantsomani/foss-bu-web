@@ -9,6 +9,30 @@ const PITCH_LIMIT = 1.45, TAU = Math.PI * 2;
 const PAD_DEAD = 0.16, PAD_LOOK_DEG = 260;   // look speed in degrees/second at full deflection
 const _stick = [0, 0];
 // Radial deadzone rescaled to 0..1, then a power curve so small deflections give fine aim.
+// Browsers report many controllers without the 'standard' mapping (Firefox, Linux, some third-party pads). Translate
+// them into standard button bits and [leftX, leftY, rightX, rightY] instead of ignoring them.
+// Xbox-style pads unmapped on Linux/Firefox: axes LX LY LT RX RY RT [dpadX dpadY]; buttons A B X Y LB RB Back Start Guide L3 R3.
+const XINPUT_BUTTONS = [0, 1, 2, 3, 4, 5, 8, 9, 16, 10, 11];
+const _axes = [0, 0, 0, 0];
+const pressedBtn = b => !!b && (b.pressed || b.value > 0.5);
+function readPad(p) {
+  let bits = 0;
+  const a = p.axes, ax = _axes;
+  if (p.mapping === 'standard' || a.length < 6) {
+    for (let i = 0; i < 16 && i < p.buttons.length; i++) if (pressedBtn(p.buttons[i])) bits |= 1 << i;
+    ax[0] = a[0] || 0; ax[1] = a[1] || 0; ax[2] = a[2] || 0; ax[3] = a[3] || 0;
+  } else {
+    for (let i = 0; i < XINPUT_BUTTONS.length && i < p.buttons.length; i++) if (pressedBtn(p.buttons[i]) && XINPUT_BUTTONS[i] < 16) bits |= 1 << XINPUT_BUTTONS[i];
+    ax[0] = a[0] || 0; ax[1] = a[1] || 0; ax[2] = a[3] || 0; ax[3] = a[4] || 0;
+    if ((a[2] || 0) > 0.3) bits |= 1 << 6;   // LT (rests at -1 or 0)
+    if ((a[5] || 0) > 0.3) bits |= 1 << 7;   // RT
+    if (a.length >= 8) {                     // D-pad reported as two axes
+      if (a[7] < -0.5) bits |= 1 << 12; else if (a[7] > 0.5) bits |= 1 << 13;
+      if (a[6] < -0.5) bits |= 1 << 14; else if (a[6] > 0.5) bits |= 1 << 15;
+    }
+  }
+  return bits;
+}
 function stick(x, y, curve) {
   const m = Math.hypot(x, y);
   if (m < PAD_DEAD) { _stick[0] = _stick[1] = 0; return _stick; }
@@ -124,13 +148,13 @@ export class Input {
   pollPad(dt) {
     let p = null;
     const pads = navigator.getGamepads ? navigator.getGamepads() : null;
-    if (pads) for (const g of pads) if (g && g.connected && g.mapping === 'standard') { p = g; break; }
+    // prefer a standard-mapped pad, but use any connected one rather than ignoring it
+    if (pads) for (const g of pads) if (g && g.connected && (g.mapping === 'standard' || !p)) { p = g; if (g.mapping === 'standard') break; }
     this.pad = p;
     if (!p) { this.padFwd = this.padSide = 0; this.padFire = this.padSprint = false; this.padPrev = 0; return; }
-    let bits = 0;
-    for (let i = 0; i < 16 && i < p.buttons.length; i++) if (p.buttons[i].pressed || p.buttons[i].value > 0.5) bits |= 1 << i;
+    const bits = readPad(p);
     const pressed = bits & ~this.padPrev; this.padPrev = bits;
-    const ax = p.axes;
+    const ax = _axes;
     if (pressed || Math.abs(ax[0]) + Math.abs(ax[1]) + Math.abs(ax[2] || 0) + Math.abs(ax[3] || 0) > 0.6) this.padActive = true;
     if ((pressed & (1 << 9)) && this.enabled && this.onEscape) this.onEscape();          // Start: pause / resume
     if (!this.active) {
