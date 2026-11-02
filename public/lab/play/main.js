@@ -175,7 +175,7 @@ function beginMatch({ session, map, wad, sprites, mapName, timeLimit, needClick 
     session, map, wad, renderer, sprites, mapName, dyn, timeLimit, myId: session.myId, names: session.names,
     vm: VM.createViewModel(), vmCtx: { speed: 0, grounded: true, sprint: false, lookDX: 0, lookDY: 0, weapon: 0, wstate: 0, wtimer: 0, events: [], player: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, eyeZ: 0 }, stepOff: 0 },
     ents: [], pickupEnts: pk.map((p, i) => { const d = PICKUP_SPRITES[p.type]; return { id: 'k' + i, x: p.x, y: p.y, z: p.z, base: p.z, sprite: d[0] + 'A0', fullbright: d[2] ? 1 : 0 }; }),
-    barrelEnts: session.barrels.map((b, j) => ({ id: 'b' + j, x: b.x, y: b.y, z: b.z, sprite: 'BAR1A0', fullbright: 0 })), barrelBoom: session.barrels.map(() => -1),
+    barrelEnts: session.barrels.map((b, j) => ({ id: 'b' + j, x: b.x, y: b.y, z: b.z, sprite: 'BAR1A0', fullbright: 0 })), barrelBoom: session.barrels.map((b, j) => (session.barrelStanding(j) ? -1 : -1e9)),   // already gone when we joined: no replay
     pEnt: {}, anim: {}, projEnts: [], projLights: new Map(), fx: Array.from({ length: 48 }, (_, i) => ({ on: false, def: null, t0: 0, ent: { id: 'f' + i, x: 0, y: 0, z: 0, sprite: '', fullbright: 1 } })), fxN: 0,
     lastRender: 0, lastNow: 0, frames: 0, fpsT: 0, fpsN: 0, fps: 0, fpsText: '', yawSet: false, lastYaw: 0, lastPitch: 0, wasAlive: true, killer: '', over: false, closed: false,
     remotes: {}, L: null, jsMs: 0, menuAt: 0, paused: false, started: performance.now(), shown: false, deadAt: 0,
@@ -390,7 +390,7 @@ function frame(now) {
   for (let j = 0; j < g.barrelEnts.length; j++) {
     const e = g.barrelEnts[j], t0 = g.barrelBoom[j];
     if (s.barrelStanding(j)) { g.barrelBoom[j] = -1; e.sprite = (Math.floor(t * 35 / 6) & 1) ? 'BAR1B0' : 'BAR1A0'; e.fullbright = 0; ents.push(e); continue; }
-    if (t0 < 0) continue;
+    if (t0 < 0) { g.barrelBoom[j] = t; continue; }   // its event was lost: animate from now (one frame late)
     const tic = (t - t0) * 35;
     if (tic >= 35) continue;
     e.sprite = 'BEXP' + 'ABCDE'[tic < 5 ? 0 : tic < 10 ? 1 : tic < 15 ? 2 : tic < 25 ? 3 : 4] + '0'; e.fullbright = tic >= 10 ? 1 : 0; ents.push(e);

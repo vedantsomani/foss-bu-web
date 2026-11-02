@@ -170,6 +170,7 @@ export class Router {
     for (const ws of this.sockets.keys()) { try { ws.close(1001, 'Room expired'); } catch {} }
     this.sockets.clear();
     this.players.clear();
+    if (this.sweeper) { clearInterval(this.sweeper); this.sweeper = null; }
     await this.ctx.storage.deleteAll();
     this.meta = null;
   }

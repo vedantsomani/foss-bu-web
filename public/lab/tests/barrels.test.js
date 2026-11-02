@@ -107,3 +107,11 @@ test('barrels: clients learn which barrels are gone (and stop colliding with the
   assert.equal(client.barrelStanding(2), true);
   assert.equal(client.pw.barrels[0].st, 2, 'prediction world no longer treats it as solid');
 });
+
+test('barrels: a barrel beside a wall never pushes a player through the wall', () => {
+  const map = buildMap([{ x0: 0, y0: 0, x1: 1024, y1: 1024 }], [dm(100, 512), barrel(30, 512)]);
+  const world = S.createWorld(map, 7); S.addPlayer(world, 1);
+  const p = world.players[1]; Object.assign(p, { x: 40, y: 540, spawnProt: 0 });
+  for (let t = 0; t < 120; t++) S.step(world, { 1: S.quantizeInput(S.makeInput({ fwd: 1, yaw: -Math.PI / 2, seq: world.tick + 1 })) });
+  assert.ok(p.x >= S.RADIUS - 0.01 && p.x <= 1024 - S.RADIUS + 0.01, `left the map: x=${p.x}`);
+});

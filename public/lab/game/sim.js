@@ -325,6 +325,10 @@ export function damageBarrel(world, i, dmg, src) {
   b.st = 1; b.fuse = BARREL_FUSE; b.src = src;
   world.events.push({ t: 'barrel', idx: i, x: b.x, y: b.y, z: b.z });
 }
+// barrels ride lifts and lowering floors (their z is the floor under them)
+function settleBarrels(world) {
+  for (const b of world.barrels) if (b.st !== 2) b.z = floorAt(world.prep, b.x, b.y, world.sectorFloor);
+}
 function updateBarrels(world) {
   for (const b of world.barrels) {
     if (b.st !== 1 || --b.fuse > 0) continue;
@@ -341,8 +345,10 @@ function pushFromBarrels(world, p) {
     const dx = p.x - b.x, dy = p.y - b.y, min = RADIUS + BARREL_R, d2 = dx * dx + dy * dy;
     if (d2 >= min * min) continue;
     const d = Math.sqrt(d2);
-    if (d < 1e-6) { p.x += min; continue; }
-    p.x = b.x + dx / d * min; p.y = b.y + dy / d * min;
+    // push out through the normal wall collision so a barrel near a wall cannot shove the player through it
+    if (d < 1e-6) moveCircle(world.prep, p, min, 0, world.sectorFloor, world.sectorCeil);
+    else moveCircle(world.prep, p, b.x + dx / d * min - p.x, b.y + dy / d * min - p.y, world.sectorFloor, world.sectorCeil);
+    if (d < 1e-6) continue;
     const vn = (p.vx * dx + p.vy * dy) / d;
     if (vn < 0) { p.vx -= vn * dx / d; p.vy -= vn * dy / d; }
   }
@@ -524,6 +530,7 @@ function weaponCommand(world, p, inp, opts) {
 // Vanilla-style autoaim: look for a target within +-5.6 degrees of the aim line (Doom tries the aim angle and +-1<<26) that is
 // in line of sight, and return the pitch to it. {found, dyaw, pitch}
 const _aim = { found: false, dyaw: 0, pitch: 0 };
+let _aimDist = 0;
 function autoAim(world, p, ox, oy, oz, yaw, range, posFn) {
   _aim.found = false;
   let bestA = 1e9;
@@ -539,7 +546,7 @@ function autoAim(world, p, ox, oy, oz, yaw, range, posFn) {
     if (Math.abs(pitch) > 0.56) continue;                       // vanilla's +-100/160 slope window
     const l = Math.hypot(dist, tz), r = traceRay(world, ox, oy, oz, dx / l, dy / l, tz / l, l + 1, p.id, posFn);
     if (r.kind !== 'player' || r.target !== id) continue;
-    bestA = Math.abs(da); _aim.found = true; _aim.dyaw = da; _aim.pitch = pitch;
+    bestA = Math.abs(da); _aim.found = true; _aim.dyaw = da; _aim.pitch = pitch; _aimDist = dist;
   }
   // Doom's autoaim also locks onto shootable things such as barrels: a level shot would pass over a 42-unit barrel.
   const bs = world.barrels;
@@ -549,12 +556,13 @@ function autoAim(world, p, ox, oy, oz, yaw, range, posFn) {
     const dx = b.x - ox, dy = b.y - oy, dist = Math.hypot(dx, dy);
     if (dist < 1 || dist > range) continue;
     let da = Math.atan2(dy, dx) - yaw; da = Math.atan2(Math.sin(da), Math.cos(da));
-    if (Math.abs(da) > 0.0982 || Math.abs(da) >= bestA) continue;
+    // a player already locked keeps priority unless this barrel is clearly closer (Doom takes the first thing on the line)
+    if (Math.abs(da) > 0.0982 || (_aim.found && dist >= _aimDist - 32)) continue;
     const tz = b.z + BARREL_H * 0.5 - oz, pitch = Math.atan2(tz, dist);
     if (Math.abs(pitch) > 0.56) continue;
     const l = Math.hypot(dist, tz), r = traceRay(world, ox, oy, oz, dx / l, dy / l, tz / l, l + 1, p.id, posFn);
     if (r.kind !== 'barrel' || r.target !== j) continue;
-    bestA = Math.abs(da); _aim.found = true; _aim.dyaw = da; _aim.pitch = pitch;
+    _aim.found = true; _aim.dyaw = da; _aim.pitch = pitch; _aimDist = dist;
   }
   return _aim;
 }
@@ -1047,7 +1055,7 @@ export function step(world, inputsByPlayer, dt = DT, opts = null) {
   }
   if (world.auth) updateMovers(world);
   updateProjectiles(world, dt);
-  if (world.auth && world.barrels) updateBarrels(world);
+  if (world.barrels) { if (world.movers && world.movers.length) settleBarrels(world); if (world.auth) updateBarrels(world); }
   updatePickups(world);
   world.tick++;
   return world;

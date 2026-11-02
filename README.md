@@ -2,7 +2,7 @@
 
 Retro deathmatch for 2–4 players that runs in the browser. Create a room, share the 8-character code or link, and play. Nothing to install.
 
-- **Engine:** Chocolate Doom compiled to WebAssembly (the WebSocket networking build from Cloudflare's doom-wasm).
+- **Engines:** the Classic engine is Crispy Doom compiled to WebAssembly (source in `engine/`, networking ported from Cloudflare's doom-wasm); the Fragline engine is this project's own JavaScript/WebGL2 engine (`public/lab/`, play at `/lab/play/`).
 - **Game data:** the free deathmatch set from the Freedoom project, rebranded as Fragline in the game and site. It has 32 maps, all selectable in the lobby. No commercial Doom files are needed.
 - **Modes:** Deathmatch and Deathmatch 2.0 (items respawn), with a 5–20 minute or unlimited time limit, plus solo practice on any map.
 - **Hosting:** Cloudflare Workers + Durable Objects for online rooms, or `lan_server.py` for fully offline play on a local network (Raspberry Pi or laptop).
@@ -65,4 +65,4 @@ node tests/browser.test.cjs http://127.0.0.1:8765 4
 
 ## Credits
 
-FreeDM by the Freedoom contributors (BSD-style license). Chocolate Doom WebAssembly (GPL-2.0); see `ENGINE-SOURCE-AND-CREDITS.txt` for binary provenance, corresponding source and the one change made to the loader. The relay design follows Cloudflare's multiplayer Doom (BSD 3-clause, `CLOUDFLARE-LICENSE.txt`). Touch joysticks use nipplejs (MIT).
+FreeDM by the Freedoom contributors (BSD-style license). Crispy Doom WebAssembly (GPL-2.0-or-later); see `engine/README.md` and `ENGINE-SOURCE-AND-CREDITS.txt` for the source and every change. The relay design follows Cloudflare's multiplayer Doom (BSD 3-clause, `CLOUDFLARE-LICENSE.txt`). Touch joysticks use nipplejs (MIT).

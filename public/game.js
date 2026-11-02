@@ -360,7 +360,7 @@
     function engineMessage(text) {
         if (debug) console.log(text);
         // The engine found a controller at start-up and reads it itself; controller.js then stays out of the way.
-        if (text.startsWith('I_InitGamepad: ') && !/No gamepad|Failed/.test(text)) window.fraglineNativePad = true;
+        if (text.startsWith('I_InitGamepad: ') && !/No gamepad|Failed/.test(text)) { window.fraglineNativePad = true; $('click-play').hidden = true; }
         if (!text.startsWith('doom: ')) return;
         const comma = text.indexOf(',');
         const id = parseInt(text.slice(6, comma), 10);
@@ -404,7 +404,7 @@
         $('panel').hidden = true;
         $('canvas').focus({preventScroll: true});
         renderSettingValues();
-        if (!document.pointerLockElement && !padConnected()) $('click-play').hidden = false;
+        if (!document.pointerLockElement && !window.fraglineNativePad) $('click-play').hidden = false;
         toast('Esc opens the game menu.', 4000);
     }
 
@@ -421,11 +421,6 @@
         try {
             canvas.requestPointerLock(raw ? {unadjustedMovement: true} : undefined)?.catch?.(() => {});
         } catch { /* not available; the click-to-play layer offers another try */ }
-    }
-
-    function padConnected() {
-        try { return Array.from(navigator.getGamepads?.() || []).some(p => p?.connected && p.mapping === 'standard'); }
-        catch { return false; }
     }
 
     function matchStarted() {
